@@ -2,7 +2,7 @@
 
 The first standalone headless Scratch VM over MCP — plus every tool an AI agent needs to build, playtest, and publish Scratch projects without opening a browser.
 
-108 tools. One stdio command. Zero name collisions.
+110 tools. One stdio command. Zero name collisions.
 
 ```
 MCP client ──stdio──▶ python3 -m scratch_unified
@@ -49,7 +49,7 @@ cd upstream-scratch4js && pnpm install && pnpm build
 ```bash
 python3 tests/test_offline.py   # 34 checks, no network, no credentials
 python3 tests/test_runtime.py   # 26 checks, headless VM playtest (see below)
-python3 build_tower_game.py     # 36-check static gate, regenerates the demo .sb3
+python3 build_tower_game.py     # 40-check static gate, regenerates the demo .sb3
 ```
 
 ## The headless VM loop
@@ -77,7 +77,7 @@ Headless gaps are patched, not hidden: distance-based touching fallback (no rend
 
 ```
 34 passed, 0 failed   (offline: tool surface, sessions, spy round-trip, git diff)
-26 passed, 0 failed   (runtime: full playtest + debug tools, live VM)
+34 passed, 0 failed   (runtime: full playtest + debug tools, live VM)
 36 passed, 0 failed   (static gate on the generator)
 ```
 
@@ -85,7 +85,7 @@ Load `tower-castle-defense.sb3` in scratch.mit.edu or TurboWarp to play it yours
 
 ## Tool census
 
-`social_*` 20 · `project_*` 18 · `spy_*` 14 · `sb3_*` 56 = **108**, asserted by the offline suite. Full per-tool reference: `docs/IDENTIFIERS.md`. Architecture: `docs/ARCHITECTURE.md`. What the VM research found (and what it corrected): `docs/RESEARCH-HEADLESS-RUNTIME.md`. Build notes and every trap the game taught us: `docs/HANDOFF.md`.
+`social_*` 20 · `project_*` 18 · `spy_*` 14 · `sb3_*` 58 = **110**, asserted by the offline suite. Full per-tool reference: `docs/IDENTIFIERS.md`. Architecture: `docs/ARCHITECTURE.md`. What the VM research found (and what it corrected): `docs/RESEARCH-HEADLESS-RUNTIME.md`. Build notes and every trap the game taught us: `docs/HANDOFF.md`.
 
 ## Layout
 
@@ -102,7 +102,7 @@ upstream-scratch-mcp/     reference clone (read-only)
 upstream-scratch4js/      reference clone + Node sidecar source (runtime dep for sb3_*)
 upstream-scratchpy-studio/  reference clone (runtime dep, loaded headless)
 tests/                    test_offline.py (34) + test_runtime.py (26)
-build_tower_game.py       demo game generator + 36-check static gate
+build_tower_game.py       demo game generator + 40-check static gate
 tower-castle-defense.sb3  generated demo (84 KB)
 docs/                     PRD, ARCHITECTURE, IDENTIFIERS, HANDOFF, RESEARCH-HEADLESS-RUNTIME
 ```
