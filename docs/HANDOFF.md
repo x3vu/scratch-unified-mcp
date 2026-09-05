@@ -10,7 +10,7 @@ touching `build_tower_game.py` again.
 `/Users/blessed/Scratch mcp/build_tower_game.py` is a stdlib-only Python
 script that generates `tower-castle-defense.sb3` — a 9-target vanilla
 Scratch 3 tower-defense game (Stage + Castle + 4 Plots + Enemy + Arrow +
-StartButton). 35-check self-test runs in <2s, only writes the .sb3 on PASS.
+StartButton). 38-check self-test runs in <2s, only writes the .sb3 on PASS.
 
 Run: `cd "/Users/blessed/Scratch mcp" && python3 build_tower_game.py`
 
@@ -53,14 +53,16 @@ Run: `cd "/Users/blessed/Scratch mcp" && python3 build_tower_game.py`
 - `TXT(s)` — primitive string shadow `[10, s]`.
 - `bc(target, msg)` / `bcast(target, msg, parent=...)` / `bcast_wait(target, msg)` — broadcast senders.
 
-### The 11 stage variables
+### The stage variables and lists
 
-`Gold` (150), `Lives` (10), `Wave` (0), `Score` (0), `EnemiesLeft` (0),
-`GameActive` (0), `ShooterX` (0), `ShooterY` (0), `EnemyX` (0), `EnemyY` (0).
+Scalars: `Gold` (150), `Lives` (10), `Wave` (0), `Score` (0),
+`EnemiesLeft` (0), `GameActive` (0), `ShooterX` (0), `ShooterY` (0).
 
-Why all 10: ShooterX/Y are the shared handoff (last tower to fire wins);
-EnemyX/Y are the position publisher (last enemy to move wins). Both have
-a "last writer wins" semantic that works in practice.
+Lists: `EnemyXList`, `EnemyYList`, `MyHPList` (one slot per enemy clone,
+HANDOFF §6.1 — replaced the old last-writer-wins `EnemyX`/`EnemyY`
+publisher). ShooterX/Y are still the shared handoff (last tower to fire
+wins), which is fine because only one arrow is in flight per plot at a
+time.
 
 ### The 4 broadcasts (each with a single shared id across all targets)
 
@@ -70,7 +72,7 @@ a "last writer wins" semantic that works in practice.
 
 ---
 
-## 3. The 35 self-test checks (what they actually verify)
+## 3. The 38 self-test checks (what they actually verify)
 
 | # | Check | Catches |
 |---|---|---|
@@ -82,23 +84,26 @@ a "last writer wins" semantic that works in practice.
 | 6 | broadcast_id_uniqueness | two ids for the same message name |
 | 7 | broadcast_listeners | listener missing broadcast field |
 | 8 | opcode_input_names | the NUM1/OPERAND1 swap trap (caught the spawner bug) |
-| 9 | known_opcodes | every emitted opcode is one scratch-vm registers — catches typos like `operator_pickrandom` (real name `operator_random`), which silently fail JIT compile and spin the interpreter |
-| 10 | repeat_TIMES_shape | `control_repeat` with wrong input name |
-| 11 | menu_values | dropdown references nonexistent menu option |
-| 12 | assets_present | costumes/sounds not in `data` |
-| 13 | monitors_match_stage_vars | Gold/Lives/Wave/Score have monitors |
-| 14 | spawner_TIMES_evaluates | spawner `repeat TIMES` evaluates to 0 (or non-positive) |
-| 15 | spawner_creates_clones | spawner has at least 1 `control_create_clone_of` |
-| 16 | arrow_moves_horizontally | Arrow has `motion_movesteps STEPS>0` (still useful as a sanity check) |
-| 17 | arrow_no_static_90 | top-level Arrow chain has no `point in direction 90` (regression check that the static-90° bug doesn't come back) |
-| 18 | arrow_homes_on_enemy | Arrow's forever body reads `EnemyX` and uses `operator_mathop atan` |
-| 19 | arrow_dx_dy_computed | Arrow's forever has `operator_subtract(EnemyX, motion_xposition)` and same for y |
-| 20 | arrow_clone_chain_order | Arrow's `start_as_clone` chain: goto → show → forever (in that order, no pointindirection between) |
-| 21 | enemy_walks_tower_lane | Enemy has gotoxy to y=90 (one of the two lanes) |
-| 22 | enemy_publishes_position | Enemy has a forever that sets `EnemyX` and `EnemyY` to motion_x/y |
-| 23-33 | costume_center:* (11) | each costume's SVG bbox is non-empty |
-| 34 | arrow_cosmetic_tip_right | arrow SVG's rightmost `<path>` is within 1px of bbox xmax (real check, not tautology) |
-| 35-36 | (extra geometry per costume) | |
+| 9 | list_field_not_input | list ops encode LIST as a **field** `[name, id]`, never an input — the VM's arg resolver and JIT both read `fields.LIST`; input-encoded refs crash threads with `Cannot read properties of null (reading '_isHat')` |
+| 10 | known_opcodes | every emitted opcode is one scratch-vm registers — catches typos like `operator_pickrandom` (real name `operator_random`), which silently fail JIT compile and spin the interpreter |
+| 11 | repeat_TIMES_shape | `control_repeat` with wrong input name |
+| 12 | menu_values | dropdown references nonexistent menu option |
+| 13 | assets_present | costumes/sounds not in `data` |
+| 14 | monitors_match_stage_vars | Gold/Lives/Wave/Score have monitors |
+| 15 | spawner_TIMES_evaluates | spawner `repeat TIMES` evaluates to 0 (or non-positive) |
+| 16 | spawner_creates_clones | spawner has at least 1 `control_create_clone_of` |
+| 17 | arrow_moves_horizontally | Arrow has `motion_movesteps STEPS>0` (still useful as a sanity check) |
+| 18 | arrow_points_right | Arrow chain has `point in direction 90` with DIRECTION as an input (the build's own convention) |
+| 19 | arrow_clone_chain_order | Arrow's `start_as_clone` chain: goto → show → forever (in that order) |
+| 20 | arrow_no_static_90 | no hardcoded `point in direction 90` in the Arrow top-level hat chain (regression check) |
+| 21 | arrow_homes_on_enemy | Arrow's forever body reads `item T of EnemyXList` and uses `operator_mathop atan` (per-clone targeting, HANDOFF §6.1) |
+| 22 | arrow_dx_dy_computed | Arrow's forever has `operator_subtract(itemT(EnemyXList), motion_xposition)` and same for y |
+| 23 | enemy_publishes_position | Enemy clone hat's forever `replaceitemoflist` both EnemyXList and EnemyYList at MyIndex |
+| 24 | enemy_registers_slot | Enemy clone hat sets MyIndex and appends x/y/HP to EnemyXList/EnemyYList/MyHPList (HANDOFF §6.1) |
+| 25 | plot_has_per_plot_shooter_vars | each Plot has sprite-local ShooterX/ShooterY |
+| 26 | enemy_walks_tower_lane | Enemy has gotoxy to y=90 or y=-110 (one of the two lanes) |
+| 27-37 | costume_center:* (11) | each costume's SVG bbox is non-empty |
+| 38 | arrow_cosmetic_tip_right | arrow SVG's rightmost `<path>` is within 1px of bbox xmax (real check, not tautology) |
 
 ---
 
@@ -303,7 +308,7 @@ named sprite (the renderer path checks every clone, not just the
 first), and `isTouchingEdge` checks the sprite's bounds against the
 480×360 stage.
 
-### 4.14 Dead code: `EnemyY` Stage var, Enemy `HP` sprite-local,
+### 4.14 Dead code (resolved): `EnemyY` Stage var, Enemy `HP` sprite-local,
 `tip_offset_from_right` geometry variable
 
 `EnemyY` was declared and initialized but never read or written
@@ -311,7 +316,8 @@ elsewhere. `HP` (separate from `MyHP`) was set on each clone but
 only `MyHP` was read by the hit-check. `tip_offset_from_right` was
 `visual_xmax - visual_xmax` (always 0 by construction) and never used.
 
-**Fix:** removed all three.
+**Fix:** removed all three. (The old `EnemyY` Stage var is now a
+real, used Stage list `EnemyYList` — see §6.1.)
 
 ---
 
@@ -329,20 +335,25 @@ only `MyHP` was read by the hit-check. `tip_offset_from_right` was
 4. Enemy receives `StartWave` → `repeat (3 + Wave) { clone
    myself; wait 0.8s }`. Each clone runs the merged
    `start_as_clone` hat.
-5. Each Enemy clone shows, sets `MyHP = 1 + floor((Wave-1)/3)`,
-   picks lane y=90 or y=−110, points right, then runs ONE forever
-   (see §4.2): publishes `EnemyX`/`EnemyY` to the Stage every
-   frame, hit-checks arrow contact (headless touching shim, §4.15),
-   arrival-checks `x > 195` (castle → `Lives -= 1` + vanish), else
-   `move 1.5 steps` toward the castle, then `wait 0.03` to pace the
-   loop at 30fps (warp-mode spins non-yielding bodies ~10x/frame).
+5. Each Enemy clone shows, registers its per-clone slot (`MyIndex`
+   = list length + 1; appends x/y/HP to `EnemyXList`/`EnemyYList`/
+   `MyHPList`, §6.1), picks lane y=90 or y=−110, points right, then
+   runs ONE forever (see §4.2): `replaceitemoflist MyIndex` its
+   x/y into the lists every frame, hit-checks arrow contact
+   (headless touching shim, §4.15), arrival-checks `x > 195`
+   (castle → `Lives -= 1` + vanish), else `move 1.5 steps` toward
+   the castle, then `wait 0.03` to pace the loop at 30fps
+   (warp-mode spins non-yielding bodies ~10x/frame).
 6. Each Plot's shoot-loop (every 0.9s, when built and wave is
    active) writes its position to its sprite-local AND the Stage
    `ShooterX`/`ShooterY`, then clones the Arrow.
 7. Each Arrow clone goes to `(ShooterX, ShooterY)`, shows, plays
-   shoot sound. In its forever: re-aims at the latest `EnemyX`/
-   `EnemyY` via atan with quadrant correction, moves 12 steps.
-   Deletes at the edge or on `ArrowSpent` while touching Enemy.
+   shoot sound. In its forever: scans `EnemyXList`/`MyHPList` for
+   the first live slot (T cursor: `repeat until T > len OR item T
+   of MyHPList > 0 { T += 1 }`), then re-aims at `item T` of
+   EnemyXList/EnemyYList via atan with quadrant correction, moves
+   12 steps. Deletes at the edge or on `ArrowSpent` while touching
+   Enemy.
 8. If a clone hits the castle: `Lives -= 1`, `EnemiesLeft -= 1`,
    `removed_seq` runs. If `Lives<1` → `GameOver`. If
    `EnemiesLeft==0` → `GameActive=0`. If `Wave>9` → `Victory`.
@@ -353,43 +364,42 @@ only `MyHP` was read by the hit-check. `tip_offset_from_right` was
 
 ## 6. What still needs doing
 
-### 6.1 Per-enemy position tracking (lists)
+### 6.1 Per-clone enemy state via Stage lists (DONE)
 
-Right now multiple enemies clobber the same `EnemyX`/`EnemyY`. With
-4-13 enemies per wave, the arrow tracks the most recent writer. Works
-in practice but not perfect.
+Per-clone tracking is implemented: Stage lists `EnemyXList` /
+`EnemyYList` / `MyHPList` hold one slot per enemy clone. Each clone,
+on entry, appends x/y/HP and saves its slot as a sprite-local
+`MyIndex` (list length + 1, assigned in spawn order). The
+position-publisher forever does `data_replaceitemoflist MyIndex
+motion_xposition` into EnemyXList / EnemyYList each frame. The
+arrow's homing body scans the lists with a `T` cursor: `repeat
+until T > length(EnemyXList) OR item T of MyHPList > 0 { T += 1 }`,
+then homes on `item T` — the first LIVE enemy, not the last writer.
 
-**The right fix:** use per-enemy Stage lists `EnemyXList` / `EnemyYList`.
-Each clone, on entry, appends to both lists and saves the resulting
-index as a sprite-local `MyIndex`. The position-publisher forever
-does `data_replaceitemoflist MyIndex motion_xposition` (not
-addtolist). On death, the clone's `removed_seq` deletes from both
-lists at `MyIndex`.
+**No mid-list deletes.** On kill or escape the clone sets its
+`MyHPList` slot to 0 (liveness marker) and `delete_this_clone`;
+slots are never removed, so other clones' `MyIndex` never shifts.
+The arrow's scan skips dead slots via the HP check. This replaces
+HANDOFF's original "delete at MyIndex" idea (which would have shifted
+indices mid-wave) and the old shared `EnemyX`/`EnemyY` last-writer
+clobbering.
 
-**The gotcha:** when an enemy dies mid-wave, the indices of enemies
-that spawned AFTER it shift down by 1. The next frame, those
-enemies' `MyIndex` is wrong and they'll overwrite the wrong slot.
+**sb3 gotcha that cost an hour:** list references must be encoded as
+`fields.LIST = [name, id]`, NOT `inputs.LIST = [1, id]`. Both the
+interpreter's arg resolver (`_argValues.LIST = {id, name}`) and the
+JIT (`descendVariable(block, 'LIST', ...)` reads `fields`) only look
+at fields. Input-encoded list refs deserialize to a dangling block
+id — `getCached` returns null and the thread dies with `Cannot read
+properties of null (reading '_isHat')`. Static check #9
+(`list_field_not_input`) guards this.
 
-**The proper fix:** use a global `NextIndex` Stage var that
-increments on entry. Don't decrement on death. Slots get reused
-when the list grows past `NextIndex`. The position-publisher uses
-`replaceitemoflist` with the saved index — if an old index points
-at a dead enemy, the value will be stale (0,0 or whatever the last
-write was), but the live enemies' indices are still correct.
+### 6.2 Per-clone `MyHP` (DONE)
 
-This is a real refactor (~50 lines). Skip unless the current
-"last writer wins" becomes a problem in play.
-
-### 6.2 Per-clone `MyHP`
-
-`MyHP` is a sprite-local on the Enemy target, so all clones share
-the same bucket. When one clone takes a hit, every clone's "MyHP"
-decrements. In practice only one clone is on screen at a time, so
-this is fine, but it's a latent bug.
-
-**Fix:** when the Enemy spawner allocates `MyHP`, give each clone
-a unique `MyHP` via a per-clone sprite-local indexed by clone
-spawn order. Same complexity as 6.1.
+The old shared `MyHP` sprite-local is gone; HP lives in the
+`MyHPList` Stage list slot per clone (§6.1). Arrow contact drains
+this clone's slot by 1; at 0 the clone pays out Gold/Score, plays
+the coin sound, zeroes its slot, and deletes itself. Escape zeroes
+the slot too (same liveness rule) before deducting a Life.
 
 ### 6.3 The hit-kill race
 
@@ -403,7 +413,7 @@ not killed`.
 
 ### 6.4 Re-test in a real browser
 
-The 35-check self-test catches structural bugs. It does NOT catch:
+The 38-check self-test catches structural bugs. It does NOT catch:
 - visual misplacement (bboxes can be non-empty but in the wrong
   place)
 - timing bugs (clones spawning too fast/slow)
@@ -459,9 +469,12 @@ hat, verify only ONE such hat exists per target."
 5. **Broadcast receivers and senders must share a single id per
    message name across all targets.** The Stage mirrors the
    registry. The `broadcast_id_uniqueness` check enforces this.
-6. **Sprite-local variables are shared across all clones of a
-   sprite.** Per-clone state needs an explicit per-clone index
-   or a list.
+6. **Sprite-local variables are per-clone, Stage variables are
+   shared.** `duplicateVariable(id, keepId=true)` (`target.js:415`) gives
+   every clone its own `Variable` instance (same id, own `.value`), so a
+   clone writing `MyHP` never touches another clone's `MyHP`. Only Stage
+   globals (`EnemyX/Y`, `ShooterX/Y`, `Gold`, `Lives`) are last-writer-wins
+   across clones — those are the ones that need a list + index (§6.1).
 7. **`bcast_wait` blocks the sender until all receivers finish.**
    Use `bcast` unless you genuinely need the synchronous wait.
 8. **`glidesecstoxy` is blocking — no other code in the same
@@ -584,7 +597,7 @@ edit them. Upstream updates = re-clone.
 ### 9.4 Verified state (ran 2026-09-04)
 
 - `python3 tests/test_offline.py` → **34 passed, 0 failed**.
-- `python3 build_tower_game.py` → **self_test: 35 passed, 0 failed**,
+- `python3 build_tower_game.py` → **self_test: 38 passed, 0 failed**,
   wrote `tower-castle-defense.sb3` (84,698 bytes).
 - Live `.sb3` introspection: 9 targets
   (Stage, Castle, Plot1-4, Enemy, Arrow, StartButton), **340 blocks**,
@@ -614,7 +627,7 @@ edit them. Upstream updates = re-clone.
 
 ## 10. Headless-VM runtime harness (added 2026-09-05)
 
-The 36-check self-test in `build_tower_game.py` is structural and
+The 38-check self-test in `build_tower_game.py` is structural and
 single-expression — it does NOT run the VM. `tests/test_runtime.py`
 fills that gap by driving `tower-castle-defense.sb3` through the
 proxied `sb3_vm_*` tools.
@@ -643,6 +656,13 @@ StartButton, runs wave 1, then asserts:
   `GameOver` broadcast.
 - GameOver: wave 3's 10th escape drops `Lives` below 1 and the
   `GameOver` broadcast fires (removed_seq path), `Lives ≤ 0`.
+- Deterministic seed: reload the VM, seed the PRNG (`vm_seed 20240701`),
+  run wave 1, and record each enemy clone's `(MyIndex, lane y)` —
+  deduped by `MyIndex` across 0.5s chunks. Two runs with the same seed
+  must produce byte-identical fingerprints (same lane picks, same spawn
+  order). `MyIndex` is assigned in spawn order and lane y is constant
+  per clone, so the fingerprint is immune to the wall-clock jitter of
+  paced runs shifting which clones exist at each sample boundary.
 
 Both escape/GameOver phases reuse a `run_until(predicate, max_s)`
 helper that steps in 0.5s paced chunks and accumulates events across
@@ -689,8 +709,51 @@ don't fail the build).
 - The kill-path assertion (`Gold`/`Score` increase) now works: it
   depended on the headless touching shim (§4.15) plus per-frame loop
   pacing (§4.2) — both landed with the wave-1 fixes.
-- Regression oracles for the latent races in §6.1-6.3
-  (`EnemyX` per-clone state, `MyHP` per-clone, hit-kill) are
-  intentionally NOT yet wired — they need a real `EnemyXList +
-  MyIndex` refactor in the generator (HANDOFF §6.1) before a
-  runtime assertion can be exact.
+- Regression oracles for the latent races: §6.1 (`EnemyX/Y` Stage
+  clobber) is live-tested via the deterministic-seed fingerprint; §6.3
+  (hit-kill over-kill) is covered by `errors[]` empty + exact `Lives`
+  accounting across the escape/GameOver phases. §6.2 (`MyHP` per-clone)
+  needs no oracle — `duplicateVariable` gives each clone its own value
+  (rule 6), so there is no shared bucket to regress.
+
+### 10.5 Phase 2 debug surface (added 2026-09-05)
+
+Four more tools, all live-tested in `test_runtime.py` §"phase 2":
+
+- `sb3_vm_watch(name?, target?)` → `vm_watch` — poll-and-diff variable
+  watcher (`HeadlessRuntime.watch`, `runtime.js`). Reports
+  `{target, name, value, changed, previous}` per key; clones own their
+  values so per-clone watches work.
+- `sb3_vm_stub_calls` → `vm_stub_calls` — recorded pen/sound stub calls
+  since load (`HeadlessRuntime.stubCallsOf`). Pen state itself lives on
+  the sprite (`_customState['Scratch.pen']`); sound plays are recorded
+  per sprite via the `soundBank` stub.
+- All-hat log — the existing `startHats` wrapper now logs every hat at
+  debug level (`hat <opcode> on <target>`), not just broadcasts.
+- Monitor-thread filter — `threadsRunning` and the `run()`/`stepFrame()`
+  idle check exclude `updateMonitor` + `isKilled` threads (upstream's own
+  `whenThreadsComplete` convention), so idle reads 0 instead of +N.
+
+Sidecar fixes that came out of phase-2 testing (all in `runtime.js`
+`_attachHeadlessStubs`, each found by a real crash, not by reading):
+
+- `setEffects: () => {}` on the soundBank stub — `sound_cleareffects`
+  on green flag calls `_syncEffectsForTarget → setEffects` and crashed
+  without it.
+- `document = { hidden: false }` shim in `ensureDeps` — TurboWarp's
+  `_step` reads `document.hidden` once a renderer is attached; headless
+  node has no document.
+- Target renderer backfill (`t.renderer = rt.renderer` for load-time
+  targets) — targets constructed during `loadProject` captured null
+  before `attachRenderer`; the say-bubble path then passed the
+  `!runtime.renderer` guard and crashed on null `getBoundsForBubble`.
+- `getNativeSize: () => [480, 360]` (was `[100, 100]`) — bubble
+  positioning reads stage bounds; the wrong size broke layout math.
+- `isTouchingDrawables` distance fallback on the stub — attaching a
+  renderer routes the REAL `isTouchingSprite` (which calls
+  `renderer.isTouchingDrawables`), so the stub must implement the same
+  stage-coordinate semantics, not return false.
+- Bridge opt-in — `index.js` only binds the live-reload port when
+  `SCRATCH_MCP_BRIDGE_PORT` is set. A second spawn on a held port threw
+  `EADDRINUSE` as an unhandled error and killed the sidecar before MCP
+  stdio came up ("node stdout closed" on every call).

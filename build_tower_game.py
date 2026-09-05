@@ -212,11 +212,19 @@ def build():
     v = {}
     for name, val in [("Gold", 150), ("Lives", 10), ("Wave", 0), ("Score", 0),
                       ("EnemiesLeft", 0), ("GameActive", 0),
-                      ("ShooterX", 0), ("ShooterY", 0),
-                      ("EnemyX", 0), ("EnemyY", 0)]:
+                      ("ShooterX", 0), ("ShooterY", 0)]:
         vid = uid()
         st["variables"][vid] = [name, val]
         v[name] = vid
+    # Per-clone enemy state (HANDOFF §6.1): EnemyX/EnemyY move from shared
+    # Stage vars into per-clone lists keyed by a sprite-local MyIndex. Each
+    # enemy owns its slot for life — slots are never deleted (a mid-list
+    # delete shifts every later index), instead MyHPList[MyIndex] is set to 0
+    # on death/escape and arrows target the first slot whose HP is > 0.
+    for name in ["EnemyXList", "EnemyYList", "MyHPList"]:
+        lid = uid()
+        st["lists"][lid] = [name, []]
+        v[name] = lid
     st["costumes"] = [c_battle, c_over, c_win]
     st["sounds"] = [s_lose, s_win]
 
@@ -228,10 +236,12 @@ def build():
     seq = [h, sw]
     for name, val in [("Gold", 150), ("Lives", 10), ("Wave", 0), ("Score", 0),
                       ("EnemiesLeft", 0), ("GameActive", 0),
-                      ("ShooterX", 0), ("ShooterY", 0),
-                      ("EnemyX", 0), ("EnemyY", 0)]:
+                      ("ShooterX", 0), ("ShooterY", 0)]:
         seq.append(B(st, "data_setvariableto", inputs={"VALUE": NUM(val)},
                      fields={"VARIABLE": [name, v[name]]}))
+    # clear per-clone state so MyIndex restarts at 1 on every green flag
+    for name in ["EnemyXList", "EnemyYList", "MyHPList"]:
+        seq.append(B(st, "data_deletealloflist", fields={"LIST": [name, v[name]]}))
     chain(st, seq)
 
     # game over
@@ -391,10 +401,11 @@ def build():
     e.update({"x": -230, "y": 0, "visible": False, "layerOrder": 4})
     e["costumes"] = [c_orc]
     e["sounds"] = [s_hit, s_coin]
-    hp = uid()
-    e["variables"][hp] = ["HP", 1]
-    myhp = uid()
-    e["variables"][myhp] = ["MyHP", 1]
+    # Per-clone slot index (HANDOFF §6.1). The sprite-local `MyIndex` names
+    # this clone's row in the Stage EnemyXList/EnemyYList/MyHPList lists;
+    # HP is stored per-clone in MyHPList, not in a shared sprite-local.
+    idx = uid()
+    e["variables"][idx] = ["MyIndex", 0]
     b_sw = bc(e, "StartWave")
     b_spent = bc(e, "ArrowSpent")
     b_go = bc(e, "GameOver")
@@ -477,10 +488,28 @@ def build():
     addh = B(e, "operator_add",
              inputs={"NUM1": NUM(1), "NUM2": [3, fl, [4, "1"]]})
     e["blocks"][fl]["parent"] = addh
-    setmy = B(e, "data_setvariableto",
-              inputs={"VALUE": [3, addh, [4, "1"]]},
-              fields={"VARIABLE": ["MyHP", myhp]})
-    e["blocks"][addh]["parent"] = setmy
+    # Register this clone's slot (HANDOFF §6.1): MyIndex = current list
+    # length + 1, then append x/y/HP so slot MyIndex is this clone's forever.
+    lenl = B(e, "data_lengthoflist", fields={"LIST": ["EnemyXList", v["EnemyXList"]]})
+    addone = B(e, "operator_add",
+               inputs={"NUM1": [3, lenl, [4, "0"]], "NUM2": NUM(1)})
+    e["blocks"][lenl]["parent"] = addone
+    setidx = B(e, "data_setvariableto",
+               inputs={"VALUE": [3, addone, [4, "0"]]},
+               fields={"VARIABLE": ["MyIndex", idx]})
+    e["blocks"][addone]["parent"] = setidx
+    addx = B(e, "data_addtolist",
+             inputs={"ITEM": [3, B(e, "motion_xposition"), [4, "0"]]},
+             fields={"LIST": ["EnemyXList", v["EnemyXList"]]})
+    e["blocks"][e["blocks"][addx]["inputs"]["ITEM"][1]]["parent"] = addx
+    addy = B(e, "data_addtolist",
+             inputs={"ITEM": [3, B(e, "motion_yposition"), [4, "0"]]},
+             fields={"LIST": ["EnemyYList", v["EnemyYList"]]})
+    e["blocks"][e["blocks"][addy]["inputs"]["ITEM"][1]]["parent"] = addy
+    addhp = B(e, "data_addtolist",
+              inputs={"ITEM": [3, addh, [4, "1"]]},
+              fields={"LIST": ["MyHPList", v["MyHPList"]]})
+    e["blocks"][addh]["parent"] = addhp
     # Lanes match the dirt path across the middle of the backdrop (y=-10):
     # pick -30..30 jitter so orcs spread out but stay on the path where
     # tower arrows (fired horizontally from y=90 / y=-110 plots) can meet
@@ -528,34 +557,55 @@ def build():
 
     fo = B(e, "control_forever")
 
-    # 1) publish position each frame (the arrows' homing source)
-    setex = B(e, "data_setvariableto",
-              inputs={"VALUE": [3, B(e, "motion_xposition"), [4, "0"]]},
-              fields={"VARIABLE": ["EnemyX", v["EnemyX"]]})
-    e["blocks"][e["blocks"][setex]["inputs"]["VALUE"][1]]["parent"] = setex
-    setey = B(e, "data_setvariableto",
-              inputs={"VALUE": [3, B(e, "motion_yposition"), [4, "0"]]},
-              fields={"VARIABLE": ["EnemyY", v["EnemyY"]]})
-    e["blocks"][e["blocks"][setey]["inputs"]["VALUE"][1]]["parent"] = setey
+    # 1) publish position each frame into THIS clone's slot (the arrows scan
+    #    the lists for the first slot with HP > 0).
+    rex = B(e, "data_replaceitemoflist",
+            inputs={"ITEM": var_rep(e, None, "MyIndex", idx),
+                    "VALUE": [3, B(e, "motion_xposition"), [4, "0"]]},
+            fields={"LIST": ["EnemyXList", v["EnemyXList"]]})
+    e["blocks"][e["blocks"][rex]["inputs"]["ITEM"][1]]["parent"] = rex
+    e["blocks"][e["blocks"][rex]["inputs"]["VALUE"][1]]["parent"] = rex
+    rey = B(e, "data_replaceitemoflist",
+            inputs={"ITEM": var_rep(e, None, "MyIndex", idx),
+                    "VALUE": [3, B(e, "motion_yposition"), [4, "0"]]},
+            fields={"LIST": ["EnemyYList", v["EnemyYList"]]})
+    e["blocks"][e["blocks"][rey]["inputs"]["ITEM"][1]]["parent"] = rey
+    e["blocks"][e["blocks"][rey]["inputs"]["VALUE"][1]]["parent"] = rey
 
-    # 2) hit-check: arrow contact drains MyHP; at 0, pay out and vanish.
-    #    (headless touching is provided by the sidecar's renderer shim)
+    # 2) hit-check: arrow contact drains THIS clone's HP slot; at 0, pay out
+    #    and vanish. (headless touching: sidecar renderer shim)
+    def _hp_item():
+        return B(e, "data_itemoflist",
+                 inputs={"ITEM": var_rep(e, None, "MyIndex", idx)},
+                 fields={"LIST": ["MyHPList", v["MyHPList"]]})
+
     ifh = B(e, "control_if")
     tch = B(e, "sensing_touchingobject", parent=ifh,
             inputs={"TOUCHINGOBJECTMENU": menu(e, None, "sensing_touchingobjectmenu",
                                                "TOUCHINGOBJECTMENU", "Arrow")})
     e["blocks"][e["blocks"][tch]["inputs"]["TOUCHINGOBJECTMENU"][1]]["parent"] = tch
     e["blocks"][ifh]["inputs"]["CONDITION"] = [2, tch]
-    chH = B(e, "data_changevariableby", inputs={"VALUE": NUM(-1)},
-            fields={"VARIABLE": ["MyHP", myhp]})
+    hpitem1 = _hp_item()
+    e["blocks"][e["blocks"][hpitem1]["inputs"]["ITEM"][1]]["parent"] = hpitem1
+    subhp = B(e, "operator_subtract",
+              inputs={"NUM1": [3, hpitem1, [4, "0"]], "NUM2": NUM(1)})
+    e["blocks"][hpitem1]["parent"] = subhp
+    chH = B(e, "data_replaceitemoflist",
+            inputs={"ITEM": var_rep(e, None, "MyIndex", idx),
+                    "VALUE": [3, subhp, [4, "0"]]},
+            fields={"LIST": ["MyHPList", v["MyHPList"]]})
+    e["blocks"][subhp]["parent"] = chH
+    e["blocks"][e["blocks"][chH]["inputs"]["ITEM"][1]]["parent"] = chH
     baw = bcast(e, "ArrowSpent")
     ifd = B(e, "control_if")
     chain(e, [chH, baw, ifd])
     sub(e, ifh, "SUBSTACK", chH)
+    hpitem2 = _hp_item()
+    e["blocks"][e["blocks"][hpitem2]["inputs"]["ITEM"][1]]["parent"] = hpitem2
     lte = B(e, "operator_lt", parent=ifd,
-            inputs={"OPERAND1": var_rep(e, None, "MyHP", myhp),
+            inputs={"OPERAND1": [3, hpitem2, [4, "0"]],
                     "OPERAND2": NUM(1)})
-    e["blocks"][e["blocks"][lte]["inputs"]["OPERAND1"][1]]["parent"] = lte
+    e["blocks"][hpitem2]["parent"] = lte
     e["blocks"][ifd]["inputs"]["CONDITION"] = [2, lte]
     chG = B(e, "data_changevariableby", inputs={"VALUE": NUM(20)},
             fields={"VARIABLE": ["Gold", v["Gold"]]})
@@ -564,9 +614,15 @@ def build():
     plc = B(e, "sound_play",
             inputs={"SOUND_MENU": menu(e, None, "sound_sounds_menu", "SOUND_MENU", "coin")})
     e["blocks"][e["blocks"][plc]["inputs"]["SOUND_MENU"][1]]["parent"] = plc
+    # mark the slot dead FIRST (HP -> 0) so arrow targeting skips it even
+    # before the clone finishes its fade-out
+    hpk0 = B(e, "data_replaceitemoflist",
+             inputs={"ITEM": var_rep(e, None, "MyIndex", idx), "VALUE": NUM(0)},
+             fields={"LIST": ["MyHPList", v["MyHPList"]]})
+    e["blocks"][e["blocks"][hpk0]["inputs"]["ITEM"][1]]["parent"] = hpk0
     first2 = removed_seq(e, None)
     dl2 = B(e, "control_delete_this_clone")
-    chain(e, [chG, chS, plc, first2])
+    chain(e, [hpk0, chG, chS, plc, first2])
     tail2 = first2
     while e["blocks"][tail2]["next"] is not None:
         tail2 = e["blocks"][tail2]["next"]
@@ -582,11 +638,16 @@ def build():
             inputs={"OPERAND1": [3, xr, [4, "0"]], "OPERAND2": NUM(195)})
     e["blocks"][xr]["parent"] = gtx
     e["blocks"][ifx]["inputs"]["CONDITION"] = [2, gtx]
+    # mark the slot dead on escape too (same liveness rule)
+    hpe0 = B(e, "data_replaceitemoflist",
+             inputs={"ITEM": var_rep(e, None, "MyIndex", idx), "VALUE": NUM(0)},
+             fields={"LIST": ["MyHPList", v["MyHPList"]]})
+    e["blocks"][e["blocks"][hpe0]["inputs"]["ITEM"][1]]["parent"] = hpe0
     chL = B(e, "data_changevariableby", inputs={"VALUE": NUM(-1)},
             fields={"VARIABLE": ["Lives", v["Lives"]]})
     first_removed = removed_seq(e, None)
     dl = B(e, "control_delete_this_clone")
-    chain(e, [chL, first_removed])
+    chain(e, [hpe0, chL, first_removed])
     tail = first_removed
     while e["blocks"][tail]["next"] is not None:
         tail = e["blocks"][tail]["next"]
@@ -600,12 +661,12 @@ def build():
     # lane; `wait 0.03` restores official-Scratch once-per-frame pacing.
     wte = B(e, "control_wait", inputs={"DURATION": NUM(0.03)})
     # forever body: publish -> hit-check -> arrival-check/move -> wait
-    chain(e, [setex, setey, ifh, ifx, wte])
-    sub(e, fo, "SUBSTACK", setex)
+    chain(e, [rex, rey, ifh, ifx, wte])
+    sub(e, fo, "SUBSTACK", rex)
 
-    # Hat top-level chain: show -> set MyHP -> set LanePick -> gotoxy(lane)
-    # -> point right -> forever.
-    chain(e, [h, sh, setmy, setlane, iflane, pd, fo])
+    # Hat top-level chain: show -> register slot (set MyIndex; append
+    # x/y/HP) -> set LanePick -> gotoxy(lane) -> point right -> forever.
+    chain(e, [h, sh, setidx, addx, addy, addhp, setlane, iflane, pd, fo])
 
     # enemy init
     h = B(e, "event_whenflagclicked", top=True, x=650, y=10)
@@ -620,11 +681,14 @@ def build():
     a.update({"x": -300, "y": -200, "visible": False, "layerOrder": 5})
     a["costumes"] = [c_arrow]
     a["sounds"] = [s_shoot]
-    # per-Arrow sprite-locals for homing math
+    # per-Arrow sprite-locals for homing math; T is the scan cursor over the
+    # per-clone enemy lists (HANDOFF §6.1)
     dx_local = uid()
     dy_local = uid()
+    tidx = uid()
     a["variables"][dx_local] = ["dx", 0]
     a["variables"][dy_local] = ["dy", 0]
+    a["variables"][tidx] = ["T", 1]
     b_sp = bc(a, "ArrowSpent")
     h = B(a, "event_whenflagclicked", top=True, x=10, y=10)
     hi = B(a, "looks_hide")
@@ -645,29 +709,79 @@ def build():
     chain(a, [h, gx, sh, pls, fo])
 
     # homing body (executed each forever iteration):
-    # 1. set dx = EnemyX - x position
+    # 0. scan the per-clone lists for the first LIVE enemy (HANDOFF §6.1):
+    #    repeat until T > length(EnemyXList) OR item T of MyHPList > 0
+    # 1. set dx = item T of EnemyXList - x position
     # Helper: each var reporter must be a separate block (one parent per block).
     def _var_reporter(vname, vid):
         return B(a, "data_variable", fields={"VARIABLE": [vname, vid]})
 
+    def _list_item(lname, lid):
+        r = B(a, "data_itemoflist",
+              inputs={"ITEM": [3, _var_reporter("T", tidx), [4, "1"]]},
+              fields={"LIST": [lname, lid]})
+        a["blocks"][a["blocks"][r]["inputs"]["ITEM"][1]]["parent"] = r
+        return r
+
+    # scan: set T=1; repeat until T > len OR item T of MyHPList > 0 { T += 1 }
+    setT = B(a, "data_setvariableto", inputs={"VALUE": NUM(1)},
+             fields={"VARIABLE": ["T", tidx]})
+    lenr = B(a, "data_lengthoflist", fields={"LIST": ["EnemyXList", v["EnemyXList"]]})
+    gtTlen = B(a, "operator_gt",
+               inputs={"OPERAND1": [3, _var_reporter("T", tidx), [4, "1"]],
+                       "OPERAND2": [3, lenr, [4, "0"]]})
+    a["blocks"][a["blocks"][gtTlen]["inputs"]["OPERAND1"][1]]["parent"] = gtTlen
+    a["blocks"][lenr]["parent"] = gtTlen
+    hpitemT = _list_item("MyHPList", v["MyHPList"])
+    gtHP = B(a, "operator_gt",
+             inputs={"OPERAND1": [3, hpitemT, [4, "0"]], "OPERAND2": NUM(0)})
+    a["blocks"][hpitemT]["parent"] = gtHP
+    orc = B(a, "operator_or")
+    a["blocks"][gtTlen]["parent"] = orc
+    a["blocks"][gtHP]["parent"] = orc
+    a["blocks"][orc]["inputs"] = {"OPERAND1": [2, gtTlen], "OPERAND2": [2, gtHP]}
+    rpu = B(a, "control_repeat_until", inputs={"CONDITION": [2, orc]})
+    a["blocks"][orc]["parent"] = rpu
+    chT = B(a, "data_changevariableby", inputs={"VALUE": NUM(1)},
+            fields={"VARIABLE": ["T", tidx]})
+    sub(a, rpu, "SUBSTACK", chT)
+
+    # iff live target found (NOT (T > len)): home on it; else fly straight
+    lenr2 = B(a, "data_lengthoflist", fields={"LIST": ["EnemyXList", v["EnemyXList"]]})
+    gtTlen2 = B(a, "operator_gt",
+                inputs={"OPERAND1": [3, _var_reporter("T", tidx), [4, "1"]],
+                        "OPERAND2": [3, lenr2, [4, "0"]]})
+    a["blocks"][a["blocks"][gtTlen2]["inputs"]["OPERAND1"][1]]["parent"] = gtTlen2
+    a["blocks"][lenr2]["parent"] = gtTlen2
+    notb = B(a, "operator_not")
+    a["blocks"][gtTlen2]["parent"] = notb
+    a["blocks"][notb]["inputs"] = {"OPERAND1": [2, gtTlen2]}
+    iff = B(a, "control_if_else", inputs={"CONDITION": [2, notb]})
+    a["blocks"][notb]["parent"] = iff
+    mv2 = B(a, "motion_movesteps", inputs={"STEPS": NUM(12)})
+    sub(a, iff, "SUBSTACK2", mv2)
+
+    # 1. set dx = item T of EnemyXList - x position
     xpos1 = B(a, "motion_xposition")
+    ext = _list_item("EnemyXList", v["EnemyXList"])
     sub1 = B(a, "operator_subtract",
-             inputs={"NUM1": var_rep(a, None, "EnemyX", v["EnemyX"]),
+             inputs={"NUM1": [3, ext, [4, "0"]],
                      "NUM2": [3, xpos1, [4, "0"]]})
+    a["blocks"][ext]["parent"] = sub1
     a["blocks"][xpos1]["parent"] = sub1
-    a["blocks"][a["blocks"][sub1]["inputs"]["NUM1"][1]]["parent"] = sub1
     setdx = B(a, "data_setvariableto",
               inputs={"VALUE": [3, sub1, [4, "0"]]},
               fields={"VARIABLE": ["dx", dx_local]})
     a["blocks"][sub1]["parent"] = setdx
 
-    # 2. set dy = EnemyY - y position
+    # 2. set dy = item T of EnemyYList - y position
     ypos1 = B(a, "motion_yposition")
+    eyt = _list_item("EnemyYList", v["EnemyYList"])
     sub2 = B(a, "operator_subtract",
-             inputs={"NUM1": var_rep(a, None, "EnemyY", v["EnemyY"]),
+             inputs={"NUM1": [3, eyt, [4, "0"]],
                      "NUM2": [3, ypos1, [4, "0"]]})
+    a["blocks"][eyt]["parent"] = sub2
     a["blocks"][ypos1]["parent"] = sub2
-    a["blocks"][a["blocks"][sub2]["inputs"]["NUM1"][1]]["parent"] = sub2
     setdy = B(a, "data_setvariableto",
               inputs={"VALUE": [3, sub2, [4, "0"]]},
               fields={"VARIABLE": ["dy", dy_local]})
@@ -747,9 +861,12 @@ def build():
     # control_wait makes the body yield once per frame (official-Scratch
     # pacing) in both the JIT and interpreter paths.
     wta = B(a, "control_wait", inputs={"DURATION": NUM(0.03)})
-    # chain forever body: setdx -> setdy -> ifdx0 -> mv -> ife -> wait
-    chain(a, [setdx, setdy, ifdx0, mv, ife, wta])
-    sub(a, fo, "SUBSTACK", setdx)
+    # homing chain lives in iff's SUBSTACK: setdx -> setdy -> ifdx0 -> mv
+    chain(a, [setdx, setdy, ifdx0, mv])
+    sub(a, iff, "SUBSTACK", setdx)
+    # forever body: scan -> iff(home | fly straight) -> edge-check -> wait
+    chain(a, [setT, rpu, iff, ife, wta])
+    sub(a, fo, "SUBSTACK", setT)
     # spent handler
     h = B(a, "event_whenbroadcastreceived",
           fields={"BROADCAST_OPTION": ["ArrowSpent", b_sp]}, top=True, x=250, y=350)
@@ -901,6 +1018,12 @@ OPCODE_INPUTS = {
     "control_if_else":       ("CONDITION",),
     "data_setvariableto":    ("VALUE",),
     "data_changevariableby": ("VALUE",),
+    "data_addtolist":        ("ITEM",),  # LIST is a field, not an input
+    "data_replaceitemoflist": ("ITEM", "VALUE"),
+    "data_itemoflist":       ("ITEM",),
+    "data_lengthoflist":     (),  # LIST is a field
+    "data_deletealloflist":  (),  # LIST is a field
+    "control_repeat_until":  ("CONDITION",),
     "looks_say":             ("MESSAGE",),
     "looks_switchcostumeto": ("COSTUME",),
     "looks_switchbackdropto": ("BACKDROP",),
@@ -1052,6 +1175,23 @@ def _check_static(data):
     out.append(Check("opcode_input_names", not bad_inputs,
                      f"bad: {bad_inputs[:3]}" if bad_inputs else "",
                      "arithmetic ops use NUM1/NUM2, comparison ops use OPERAND1/2 — VM silently ignores wrong names"))
+    # List ops: LIST is a FIELD ([name, id]) in real sb3, not an input. The
+    # interpreter's arg resolver and the JIT's descendVariable both read
+    # block.fields.LIST; encoding it as an input makes the thread crash with
+    # 'Cannot read properties of null (reading _isHat)'. (caught this exact
+    # bug during the §6.1 refactor)
+    bad_list_field = []
+    for t in data["targets"]:
+        for bid, b in t["blocks"].items():
+            if b["opcode"] in ("data_addtolist", "data_replaceitemoflist",
+                                "data_itemoflist", "data_lengthoflist",
+                                "data_deletealloflist"):
+                if "LIST" not in b.get("fields", {}) or \
+                        "LIST" in b.get("inputs", {}):
+                    bad_list_field.append((t["name"], bid[:6], b["opcode"]))
+    out.append(Check("list_field_not_input", not bad_list_field,
+                     f"bad: {bad_list_field[:5]}" if bad_list_field else "",
+                     "list ops must reference the list via fields.LIST=[name,id], never inputs.LIST — the VM crashes on input-encoded list refs"))
     bad_op = []
     for t in data["targets"]:
         for bid, b in t["blocks"].items():
@@ -1342,6 +1482,41 @@ def _slot_var_name(target, value):
     return None
 
 
+def _list_name_map(data):
+    """Map every list id across all targets to its display name."""
+    m = {}
+    for t in data["targets"]:
+        for lid, entry in (t.get("lists") or {}).items():
+            m[lid] = entry[0] if isinstance(entry, list) and entry else lid
+    return m
+
+
+def _slot_list_name(target, value, list_names):
+    """Return the list display name of the first data_itemoflist block in
+    the subtree rooted at `value`, or None."""
+    seen = set()
+    stack = [value]
+    while stack:
+        v = stack.pop()
+        if not (isinstance(v, list) and len(v) >= 2):
+            continue
+        body = v[1]
+        if not isinstance(body, str) or body in seen or body not in target["blocks"]:
+            continue
+        seen.add(body)
+        b = target["blocks"][body]
+        if b["opcode"] == "data_itemoflist":
+            lid = (b.get("fields", {}).get("LIST") or [None, None])[1]
+            return list_names.get(lid)
+        nxt = b.get("next")
+        if isinstance(nxt, str):
+            stack.append([2, nxt])
+        for inp_val in b.get("inputs", {}).values():
+            if isinstance(inp_val, list):
+                stack.append(inp_val)
+    return None
+
+
 def _slot_opcode(target, value):
     """Return the opcode of the first non-shadow block in the subtree rooted
     at `value`, or None if the subtree is just a literal."""
@@ -1593,7 +1768,8 @@ def _simulate_arrow_hits(data):
                       f"motion_pointindirection(90) in top-level hat chain={has_dir90_in_hat}",
                       "Arrow hat top-level chain must not hardcode direction=90"))
 
-    # Arrow: assert the forever body contains EnemyX reporter + atan
+    list_names = _list_name_map(data)
+    # Arrow: assert the forever body contains a per-clone EnemyXList read + atan
     has_enemyx_in_forever = False
     has_atan_in_forever = False
     for bid, b in arrow["blocks"].items():
@@ -1611,9 +1787,9 @@ def _simulate_arrow_hits(data):
                 continue
             seen.add(cur)
             bb = arrow["blocks"][cur]
-            if bb["opcode"] == "data_variable":
-                fname = (bb.get("fields", {}).get("VARIABLE") or [None])[0]
-                if fname == "EnemyX":
+            if bb["opcode"] == "data_itemoflist":
+                lid = (bb.get("fields", {}).get("LIST") or [None, None])[1]
+                if list_names.get(lid) == "EnemyXList":
                     has_enemyx_in_forever = True
             if bb["opcode"] == "operator_mathop":
                 opk = (bb.get("fields", {}).get("OPERATOR") or [None])[0]
@@ -1627,32 +1803,29 @@ def _simulate_arrow_hits(data):
                         and isinstance(inp_val[1], str):
                     stack.append(inp_val[1])
     out.append(Check("arrow_homes_on_enemy", has_enemyx_in_forever and has_atan_in_forever,
-                      f"EnemyX-in-forever={has_enemyx_in_forever} atan-in-forever={has_atan_in_forever}",
-                      "Arrow's forever body must compute dx/dy against EnemyX/EnemyY and use atan"))
+                      f"EnemyXList-in-forever={has_enemyx_in_forever} atan-in-forever={has_atan_in_forever}",
+                      "Arrow's forever body must read item T of EnemyXList and use atan"))
 
-    # Arrow: assert dx/dy are computed (operator_subtract with EnemyX and motion_xposition, plus same for y)
+    # Arrow: assert dx/dy are computed (operator_subtract with item T of
+    # EnemyXList/EnemyYList and motion_xposition/motion_yposition)
     has_dx_sub = False
     has_dy_sub = False
     for bid, b in arrow["blocks"].items():
         if b["opcode"] != "operator_subtract":
             continue
-        # Inspect NUM1 and NUM2 directly via the data_variable VARIABLE field
-        # name (don't evaluate; we want the *reported* variable, not its value).
         for slot, other in (("NUM1", "NUM2"), ("NUM2", "NUM1")):
-            this_name = _slot_var_name(arrow, b["inputs"][slot])
-            if not this_name:
-                continue
+            lname = _slot_list_name(arrow, b["inputs"][slot], list_names)
             other_opcode = _slot_opcode(arrow, b["inputs"][other])
-            if this_name == "EnemyX" and other_opcode == "motion_xposition":
+            if lname == "EnemyXList" and other_opcode == "motion_xposition":
                 has_dx_sub = True
-            if this_name == "EnemyY" and other_opcode == "motion_yposition":
+            if lname == "EnemyYList" and other_opcode == "motion_yposition":
                 has_dy_sub = True
     out.append(Check("arrow_dx_dy_computed", has_dx_sub and has_dy_sub,
                       f"dx_sub={has_dx_sub} dy_sub={has_dy_sub}",
-                      "Arrow must compute dx=EnemyX-xposition and dy=EnemyY-yposition via operator_subtract"))
+                      "Arrow must compute dx=itemT(EnemyXList)-xposition and dy=itemT(EnemyYList)-yposition via operator_subtract"))
 
     # Enemy: assert a control_start_as_clone hat has a SUBSTACK chain
-    # containing control_forever with set EnemyX + set EnemyY
+    # containing control_forever with replaceitemoflist EnemyXList + EnemyYList
     has_pos_pub = False
     for bid, b in enemy["blocks"].items():
         if b["opcode"] != "control_start_as_clone":
@@ -1673,7 +1846,8 @@ def _simulate_arrow_hits(data):
                 if isinstance(inp_val, list) and len(inp_val) >= 2 \
                         and isinstance(inp_val[1], str):
                     stack.append(inp_val[1])
-        # now check seen for: control_forever with a child chain that sets EnemyX and EnemyY
+        # now check seen for: control_forever with a child chain that
+        # replaceitemoflist EnemyXList and EnemyYList
         for sub_bid in seen:
             sub_b = enemy["blocks"][sub_bid]
             if sub_b["opcode"] != "control_forever":
@@ -1681,7 +1855,6 @@ def _simulate_arrow_hits(data):
             sb = sub_b.get("inputs", {}).get("SUBSTACK")
             if not (isinstance(sb, list) and len(sb) >= 2 and isinstance(sb[1], str)):
                 continue
-            # walk subtree of forever for set EnemyX and set EnemyY
             sets_x = sets_y = False
             seen2 = set()
             stack2 = [sb[1]]
@@ -1691,11 +1864,12 @@ def _simulate_arrow_hits(data):
                     continue
                 seen2.add(cur)
                 bb2 = enemy["blocks"][cur]
-                if bb2["opcode"] == "data_setvariableto":
-                    fname = (bb2.get("fields", {}).get("VARIABLE") or [None])[0]
-                    if fname == "EnemyX":
+                if bb2["opcode"] == "data_replaceitemoflist":
+                    lid = (bb2.get("fields", {}).get("LIST") or [None, None])[1]
+                    lname = list_names.get(lid)
+                    if lname == "EnemyXList":
                         sets_x = True
-                    if fname == "EnemyY":
+                    if lname == "EnemyYList":
                         sets_y = True
                 nxt = bb2.get("next")
                 if isinstance(nxt, str):
@@ -1710,8 +1884,32 @@ def _simulate_arrow_hits(data):
         if has_pos_pub:
             break
     out.append(Check("enemy_publishes_position", has_pos_pub,
-                      "no EnemyX/EnemyY publisher in any clone hat",
-                      "Enemy must have a clone hat whose forever sets EnemyX and EnemyY to x/y position"))
+                      "no EnemyXList/EnemyYList publisher in any clone hat",
+                      "Enemy must have a clone hat whose forever replaceitemoflist EnemyXList and EnemyYList at MyIndex"))
+
+    # Enemy: assert the clone hat's top-level chain registers the per-clone
+    # slot (HANDOFF §6.1): set MyIndex, then addtolist x/y/HP into the three
+    # Stage lists.
+    regs = {"MyIndex": False, "EnemyXList": False, "EnemyYList": False, "MyHPList": False}
+    for bid, b in enemy["blocks"].items():
+        if b["opcode"] != "control_start_as_clone":
+            continue
+        cur = b.get("next")
+        while isinstance(cur, str) and cur in enemy["blocks"]:
+            bb = enemy["blocks"][cur]
+            if bb["opcode"] == "data_setvariableto":
+                fname = (bb.get("fields", {}).get("VARIABLE") or [None])[0]
+                if fname == "MyIndex":
+                    regs["MyIndex"] = True
+            if bb["opcode"] == "data_addtolist":
+                lid = (bb.get("fields", {}).get("LIST") or [None, None])[1]
+                lname = list_names.get(lid)
+                if lname in regs:
+                    regs[lname] = True
+            cur = bb.get("next")
+    out.append(Check("enemy_registers_slot", all(regs.values()),
+                     f"regs={ {k: v for k, v in regs.items()} }",
+                     "Enemy clone hat must set MyIndex and append x/y/HP to EnemyXList/EnemyYList/MyHPList (HANDOFF §6.1)"))
 
     # Plots: each Plot has sprite-local ShooterX and ShooterY variables
     local_targets = {t["name"]: t for t in data["targets"]}

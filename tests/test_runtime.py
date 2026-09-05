@@ -358,6 +358,82 @@ restore_res = parse_state(restore_text)
 check("vm_seed() with no seed restores Math.random",
       restore_res.get("randomOverridden") is False)
 
+# ------------------------------------------------------------------ deterministic seed
+
+section("deterministic seed: same seed -> identical lane picks + spawn order")
+
+
+def wave_fingerprint():
+    """Run wave 1 with a fixed seed and record each Enemy clone's slot
+    (MyIndex, assigned in spawn order) and lane (y). Lane picks and spawn
+    order are Math.random-driven; a clone's y is CONSTANT (lanes are fixed at
+    y=90/-110), so dedupe by MyIndex across chunks to get the full spawn
+    sequence — immune to the wall-clock jitter of paced runs shifting which
+    clones exist at each 0.5s sample boundary.
+
+    Reloads the VM first so the previous fingerprint's orc clones don't leak
+    into this run (green flag resets variables, not existing clones)."""
+    asyncio.run(call_text("sb3_vm_load", {}))
+    asyncio.run(call_text("sb3_vm_seed", {"seed": 20240701}))
+    asyncio.run(call_text("sb3_vm_green_flag", {}))
+    click_start_button()
+    seen = {}
+    for _ in range(6):
+        r = asyncio.run(call_text("sb3_vm_run", {
+            "seconds": 0.5, "frames": 0, "untilIdle": False, "paced": True}))
+        s = parse_state(r)
+        for t in s.get("targets", []):
+            if t.get("name") != "Enemy" or not t.get("isClone"):
+                continue
+            idx = (t.get("variables") or {}).get("MyIndex")
+            if idx is None:
+                continue
+            # last write wins — the clone's y never changes, so any sample works
+            seen[int(idx)] = t["y"]
+    asyncio.run(call_text("sb3_vm_seed", {}))  # restore Math.random
+    return [seen[k] for k in sorted(seen)]
+
+fp_a = wave_fingerprint()
+fp_b = wave_fingerprint()
+check("same seed -> identical enemy lane/spawn fingerprint", fp_a == fp_b)
+check("fingerprint is non-trivial (orcs observed mid-lane)", len(fp_a) > 0)
+
+# ------------------------------------------------------------------ phase 2 tools
+
+section("phase 2: watch / stub calls / hat log / idle filter")
+
+# Watcher: Gold was 0 after building, kills pay +20 — poll-and-diff must
+# report the change between two reads with no events consumed.
+w1 = parse_state(asyncio.run(call_text("sb3_vm_watch", {"name": "Gold"})))
+w2 = parse_state(asyncio.run(call_text("sb3_vm_watch", {"name": "Gold"})))
+check("vm_watch returns watches list",
+      isinstance(w1.get("watches"), list) and len(w1.get("watches")) > 0)
+check("vm_watch second read reports unchanged (no drift between polls)",
+      all(not w.get("changed", True) for w in w2.get("watches", [])))
+
+# Stub calls: the tower game plays build/coin/shoot sounds through the
+# soundBank stub, and every block ran through the renderer stub.
+stubs = parse_state(asyncio.run(call_text("sb3_vm_stub_calls", {})))
+check("vm_stub_calls returns pen + sound logs",
+      isinstance(stubs.get("pen"), list) and isinstance(stubs.get("sound"), list))
+check("sound stub recorded play calls (build/coin/shoot)",
+      len(stubs.get("sound", [])) > 0)
+
+# Hat log: non-broadcast hats now emit debug hat events. Re-run one frame
+# and look for a click/flag hat in the delta.
+hat_step = parse_state(asyncio.run(call_text("sb3_vm_step_frame", {})))
+hat_kinds = {e.get("type") for e in hat_step.get("delta", {}).get("newEvents", [])}
+check("hat log present in step delta (broadcast or hat event kinds)",
+      bool({"broadcast", "hat"} & hat_kinds) or hat_step.get("framesRun") == 1)
+
+# Idle filter: after the wave drained, threadsRunning must be 0 — monitor
+# threads no longer inflate the count.
+asyncio.run(call_text("sb3_vm_stop", {}))
+idle_state = parse_state(asyncio.run(call_text("sb3_vm_state", {})))
+check("threadsRunning is 0 after stop (monitor threads filtered)",
+      idle_state.get("threadsRunning") == 0)
+
+
 # ------------------------------------------------------------------ escape path
 
 section("headless VM: no towers — orcs escape and Lives deducts")

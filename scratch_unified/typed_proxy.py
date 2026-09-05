@@ -305,6 +305,21 @@ def sb3_vm_seed(seed: int | None = None) -> str:
     return SIDECAR.call_tool("vm_seed", {"seed": seed})
 
 
+def sb3_vm_watch(name: str = "", target: str = "") -> str:
+    """Poll-and-diff variable watcher: old/new/changed per key. (proxied)"""
+    args: dict = {}
+    if name:
+        args["name"] = name
+    if target:
+        args["target"] = target
+    return SIDECAR.call_tool("vm_watch", args)
+
+
+def sb3_vm_stub_calls() -> str:
+    """Recorded pen/sound stub calls since load. (proxied)"""
+    return SIDECAR.call_tool("vm_stub_calls", {})
+
+
 def sb3_screenshot() -> str:
     """Capture the live TurboWarp stage as PNG (base64-wrapped note). (proxied)"""
     return SIDECAR.call_tool("screenshot", {})
@@ -327,6 +342,7 @@ SB3_TOOL_DEFS = [
     sb3_add_sound, sb3_remove_sound, sb3_reload, sb3_run_project,
     sb3_stop_project, sb3_vm_load, sb3_vm_green_flag, sb3_vm_run,
     sb3_vm_stop, sb3_vm_state, sb3_vm_input, sb3_vm_threads,
-    sb3_vm_monitors, sb3_vm_step_frame, sb3_vm_seed,
+    sb3_vm_monitors, sb3_vm_step_frame, sb3_vm_seed, sb3_vm_watch,
+    sb3_vm_stub_calls,
     sb3_screenshot, sb3_screenshot_jpeg,
 ]
