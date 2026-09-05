@@ -72,7 +72,7 @@ time.
 
 ---
 
-## 3. The 40 self-test checks (what they actually verify)
+## 3. The 42 self-test checks (what they actually verify)
 
 | # | Check | Catches |
 |---|---|---|
@@ -104,6 +104,10 @@ time.
 | 26 | enemy_walks_tower_lane | Enemy has gotoxy to y=90 or y=-110 (one of the two lanes) |
 | 27-37 | costume_center:* (11) | each costume's SVG bbox is non-empty |
 | 38 | arrow_cosmetic_tip_right | arrow SVG's rightmost `<path>` is within 1px of bbox xmax (real check, not tautology) |
+| 39 | arrow_atan_dx_over_dy | arrow homing math: `atan(dx/dy)` + 180-flip on `dy<0`, `DEGREES` on turnright (the axes were swapped; same-row shots only worked by luck) |
+| 40 | opcode_input_names covers list ops | `data_replaceitemoflist` = `INDEX`+`ITEM`, `data_itemoflist` = `INDEX` (emitting `ITEM`/`VALUE` silently no-ops every read/write — lists froze at append values, arrows homed to the origin) |
+| 41 | spawner_resets_slot_lists | spawner clears EnemyXList/YList/MyHPList before repeating — the append-only graveyard grew to 96+ dead slots and arrow scans crawled |
+| 42 | no_orphaned_blocks | every non-shadow block reachable from a topLevel script — caught the escape/kill zero-writes whose SUBSTACK heads pointed past them |
 
 ---
 
@@ -126,6 +130,62 @@ agent "fixed" something.
 
 **Fix:** Use `NUM1`/`NUM2` for arithmetic. The check will fail loudly
 next time.
+
+### 4.1b `operator_not` reads `OPERAND`, not `OPERAND1` — arrows never flew straight
+
+**What it is:** the same silent-ignore trap but for a UNARY op: `not (a)`
+reads `args.OPERAND` (scratch3_operators.js `not(args)`), while the
+generator emitted `OPERAND1` (binary-op habit). The VM warned once
+(`operator_not: missing input OPERAND`) and every `not` evaluated
+`!toBoolean(undefined)` = **always TRUE**.
+
+**Consequence (only visible live):** the Arrow's `if not(T > len) → home
+else fly straight` ALWAYS took the home branch. An arrow whose target
+died re-homed to the stale dead slot and chased it forever instead of
+flying straight to the stage edge — arrows never died, the population
+grew to 100+, frame rate collapsed, and the game died by wave 5-9 even
+with 4 towers. `operator_not` is now in `OPCODE_INPUTS` with `OPERAND`,
+so check #8 (opcode_input_names) fails loudly on a regression.
+
+### 4.1c The escape/kill zero-writes were ORPHANED — escaped orcs became
+unhittable ghosts
+
+**What it is:** the §6.1 design zeroes a clone's `MyHPList` slot when it
+dies (`hpk0`) or escapes (`hpe0`) so arrow targeting skips it. Both
+blocks were BUILT and `chain()`-ed — but the `ifx`/`ifd` SUBSTACK heads
+were pointed at `chL`/`chG`, one block PAST the zero-write, so the
+writes never executed. `data_replaceitemoflist ITEM=0` blocks sat
+orphaned (no parent, unreachable), and every structural check passed
+because they had valid ids/inputs.
+
+**Consequence (found by watching list state live):** an escaped orc left
+`MyHPList[i]=1` and `EnemyXList[i]=196` behind — a live slot whose clone
+was gone. Every arrow's first-live scan found that ghost first and homed
+to x=196 forever (freezing at ~204, never reaching the edge), so arrow
+population exploded to 100+, the VM crawled, and kills collapsed. The
+old harness passed because wave-1 orcs (HP 1) were zeroed "for free" by
+the hit-decrement.
+
+**Fix:** point the SUBSTACK heads at the zero-writes
+(`sub(e, ifd, "SUBSTACK", hpk0)`, `sub(e, ifx, "SUBSTACK", hpe0)`), and
+add check #42 `no_orphaned_blocks` (every non-shadow block reachable
+from a topLevel script). Mutation-tested: reverting the two heads makes
+#42 fail with exactly those orphans.
+
+### 4.1d Append-only slot lists became a graveyard — arrow scans crawled
+
+**What it is:** slots are never removed (indices must stay stable
+mid-wave), so the three lists grew by one row per orc, forever. By wave
+9 they held 96+ dead slots, and every arrow re-ran its first-live scan
+from slot 1 every frame. TurboWarp's compiled-loop interrupt parks a
+long non-yielding loop at ~1 iteration per frame when the frame is busy,
+so under load each scan took ~3 seconds and arrows effectively froze.
+
+**Fix:** the Enemy `StartWave` spawner clears all three lists before
+repeating (safe: every prior clone is dead by a wave boundary; fresh
+clones re-register from slot 1). Check #41 `spawner_resets_slot_lists`
+guards it, and the simulator that walks hat → repeat now skips the
+`data_deletealloflist` resets.
 
 ### 4.2 Scratch 3 only runs ONE `start_as_clone` hat per clone — and chained forevers do NOT spawn threads
 
@@ -594,18 +654,23 @@ edit them. Upstream updates = re-clone.
   (cloud tools require an active session: "call
   `social_connect_session` first").
 
-### 9.4 Verified state (ran 2026-09-04)
+### 9.4 Verified state (ran 2026-09-05)
 
 - `python3 tests/test_offline.py` → **34 passed, 0 failed**.
-- `python3 build_tower_game.py` → **self_test: 40 passed, 0 failed**,
-  wrote `tower-castle-defense.sb3` (84,698 bytes).
+- `python3 build_tower_game.py` → **self_test: 42 passed, 0 failed**,
+  wrote `tower-castle-defense.sb3` (86,199 bytes).
+- `python3 tests/test_runtime.py` → **41 passed, 0 failed, 1 skipped**
+  (the skipped one is the gated full-game Victory run).
+- `RUN_SLOW=1 python3 tests/test_runtime.py` → **44 passed, 0 failed** —
+  the full 10-wave playthrough reaches wave 10 with Lives left and the
+  Victory broadcast fires. (Dynamic full runs win ~2/3 of the time,
+  entering wave 10 at L=6-8.)
 - Live `.sb3` introspection: 9 targets
-  (Stage, Castle, Plot1-4, Enemy, Arrow, StartButton), **340 blocks**,
-  10 Stage vars (Gold 150, Lives 10, Wave 0, Score 0, EnemiesLeft 0,
-  GameActive 0, ShooterX/Y 0, EnemyX/Y 0), 4 broadcasts
-  (GameOver, Victory, StartWave, ArrowSpent).
-- File sizes: `build_tower_game.py` 88 KB / 1861 lines;
-  `scratch_unified/` ~815 lines + `vendor_uu/` ~3.9k lines.
+  (Stage, Castle, Plot1-4, Enemy, Arrow, StartButton), ~450 blocks,
+  Stage vars incl. Gold 150 / Lives 10 / Wave 0, 3 per-clone slot lists
+  (EnemyXList/EnemyYList/MyHPList), 4 broadcasts
+  (GameOver, Victory, StartWave, ArrowSpent). File sizes:
+  `build_tower_game.py` ~2,300 lines.
 
 ### 9.5 Doc drift to know about
 

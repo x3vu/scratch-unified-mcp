@@ -49,7 +49,7 @@ cd upstream-scratch4js && pnpm install && pnpm build
 ```bash
 python3 tests/test_offline.py   # 34 checks, no network, no credentials
 python3 tests/test_runtime.py   # 41 checks, headless VM playtest (see below)
-python3 build_tower_game.py     # 40-check static gate, regenerates the demo .sb3
+python3 build_tower_game.py     # 42-check static gate, regenerates the demo .sb3
 ```
 
 ## The headless VM loop
@@ -80,7 +80,7 @@ Headless gaps are patched, not hidden: distance-based touching fallback (no rend
 ```
 34 passed, 0 failed   (offline: tool surface, sessions, spy round-trip, git diff)
 41 passed, 0 failed   (runtime: live VM playtest + debug + media tools)
-40 passed, 0 failed   (static gate on the generator)
+42 passed, 0 failed   (static gate on the generator)
 ```
 
 ## Tool census
@@ -101,8 +101,8 @@ scratch_unified/          the server (this is what runs)
 upstream-scratch-mcp/     reference clone (read-only)
 upstream-scratch4js/      reference clone + Node sidecar source (runtime dep for sb3_*)
 upstream-scratchpy-studio/  reference clone (runtime dep, loaded headless)
-tests/                    test_offline.py (34) + test_runtime.py (26)
-build_tower_game.py       demo game generator + 40-check static gate
+tests/                    test_offline.py (34) + test_runtime.py (41) + test_stress.py (47)
+build_tower_game.py       demo game generator + 42-check static gate
 tower-castle-defense.sb3  generated demo (84 KB)
 docs/                     PRD, ARCHITECTURE, IDENTIFIERS, HANDOFF, RESEARCH-HEADLESS-RUNTIME
 ```

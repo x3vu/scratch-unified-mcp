@@ -496,6 +496,64 @@ check("GameOver broadcast observed as the 10th orc escaped",
       has_event(events_go, "broadcast", "GameOver"))
 check("Lives <= 0 at GameOver", lives_go is not None and lives_go <= 0)
 
+# ------------------------------------------------------------------ victory
+
+# Full-game playthrough to the Victory broadcast. Paced runs are real-time
+# (waits elapse on the wall clock), so 10 waves take ~3 minutes — gated behind
+# RUN_SLOW=1 so the default suite stays fast. Run it with:
+#   RUN_SLOW=1 python3 tests/test_runtime.py
+if os.environ.get("RUN_SLOW", "0") == "1":
+    section("headless VM: full playthrough — wave 10 clear fires Victory")
+    # Fresh game: green flag resets Gold=150/Lives=10/Wave=0 and un-builds plots.
+    asyncio.run(call_text("sb3_vm_green_flag", {}))
+    asyncio.run(call_text("sb3_vm_run", {"seconds": 0.5, "frames": 0,
+                                         "untilIdle": False, "paced": True}))
+
+    def build_plot(x, y):
+        asyncio.run(call_text("sb3_vm_input", {
+            "mouseX": x, "mouseY": y, "mouseDown": True}))
+        asyncio.run(call_text("sb3_vm_run", {"seconds": 0.1, "frames": 0,
+                                             "untilIdle": False, "paced": True}))
+        asyncio.run(call_text("sb3_vm_input", {
+            "mouseX": x, "mouseY": y, "mouseDown": False}))
+        asyncio.run(call_text("sb3_vm_run", {"seconds": 0.1, "frames": 0,
+                                             "untilIdle": False, "paced": True}))
+
+    # 150 starting gold buys 3 towers; wave-1 kills fund the 4th (real play).
+    for x, y in ((-120, 90), (0, 90), (-120, -110)):
+        build_plot(x, y)
+    lives_enter_w10 = None
+    victory_seen = False
+    game_over_seen = False
+    for w in range(1, 11):
+        if w == 2:
+            build_plot(0, -110)
+        click_start_button()
+        final, evs, _ = run_until(
+            lambda s, ev: game_active(s) == 0
+            or has_event(ev, "broadcast", "Victory")
+            or has_event(ev, "broadcast", "GameOver"),
+            45.0, chunk=1.0)
+        wave_end = find_stage_var(final, "Wave")
+        if has_event(evs, "broadcast", "GameOver"):
+            game_over_seen = True
+            break
+        if w == 10:
+            lives_enter_w10 = find_stage_var(final, "Lives")
+            victory_seen = has_event(evs, "broadcast", "Victory")
+            break
+        # wave fully closed (Active 0)? predicate may have matched on a
+        # broadcast; drain until the field is quiet before starting the next.
+        final, _, _ = run_until(lambda s, e: game_active(s) == 0, 8.0, chunk=1.0)
+    check("wave 10 was reached without GameOver",
+          not game_over_seen and lives_enter_w10 is not None)
+    check("Lives remained > 0 entering wave 10",
+          lives_enter_w10 is not None and lives_enter_w10 > 0)
+    check("Victory broadcast fires after wave-10 clear", victory_seen)
+else:
+    section("headless VM: full playthrough to Victory")
+    skip("10-wave Victory run", "RUN_SLOW=1 (takes ~3 min paced)")
+
 # ------------------------------------------------------------------ cleanup
 
 section("cleanup")

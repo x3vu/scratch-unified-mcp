@@ -1167,6 +1167,43 @@ def _check_static(data):
     out.append(Check("parent_next_links", not broken,
                      f"broken: {broken[:3]}" if broken else "",
                      "every input/next ref must have a matching parent backlink"))
+    # Full reachability: every non-shadow block must be reachable from some
+    # topLevel script by walking next + input references. Catches ORPHANED
+    # blocks — the escape/kill zero-writes (data_replaceitemoflist ITEM=0 on
+    # MyHPList) were once built and chained but the ifx/ifd SUBSTACK heads
+    # pointed PAST them, so they never executed: escaped orcs left live
+    # HP>0 ghost slots at x=196 that hijacked every arrow's homing. All
+    # structure checks passed because the orphans had valid inputs/ids.
+    orphans = []
+    for t in data["targets"]:
+        blocks = t["blocks"]
+        starts = [bid for bid, b in blocks.items() if b.get("topLevel")]
+        reach = set(starts)
+        stack = list(starts)
+        while stack:
+            bid = stack.pop()
+            b = blocks[bid]
+            nxt = b.get("next")
+            if nxt and nxt not in reach:
+                reach.add(nxt)
+                stack.append(nxt)
+            for ival in b.get("inputs", {}).values():
+                # input forms: [1, shadow], [2, block], [3, block, shadow], [4, ...]
+                refs = []
+                if isinstance(ival, list) and len(ival) >= 2 and isinstance(ival[1], str):
+                    refs.append(ival[1])
+                if isinstance(ival, list) and len(ival) >= 3 and isinstance(ival[2], str):
+                    refs.append(ival[2])
+                for r in refs:
+                    if r in blocks and r not in reach:
+                        reach.add(r)
+                        stack.append(r)
+        for bid in blocks:
+            if bid not in reach and not blocks[bid].get("shadow"):
+                orphans.append((t["name"], bid, blocks[bid].get("opcode")))
+    out.append(Check("no_orphaned_blocks", not orphans,
+                     f"orphans: {orphans[:4]}" if orphans else "",
+                     "every non-shadow block must be reachable from a topLevel script — orphaned zero-writes silently skipped escape/kill cleanup"))
     bad_bc = []
     for t in data["targets"]:
         for bid, b in t["blocks"].items():
