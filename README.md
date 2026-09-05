@@ -75,17 +75,13 @@ Six core tools, debug tools, and media tools, all proxied to a lazily-spawned No
 
 Headless gaps are patched, not hidden: distance-based touching fallback (no renderer means every `touching` returns `false` upstream), sprite-click shim, broadcast logging via wrapped `startHats`, interpreter mode to dodge a JIT `pickrandom` false-alarm. Details: `upstream-scratch4js/packages/scratch-mcp/src/runtime.js`.
 
-## Proof it works: tower-castle-defense
-
-`build_tower_game.py` (stdlib only) generates a 9-target, 341-block tower-defense game. `tests/test_runtime.py` plays it for real through the tools above: green flag → build 3 towers → start wave 1 → assert kills pay out; then a towerless run asserting orcs escape and Lives 10→6; then waves 2–3 asserting GameOver fires on the 10th escape; then the 4 debug tools against the same live run.
+## Verification
 
 ```
 34 passed, 0 failed   (offline: tool surface, sessions, spy round-trip, git diff)
-41 passed, 0 failed   (runtime: full playtest + debug + phase-3a media tools, live VM)
+41 passed, 0 failed   (runtime: live VM playtest + debug + media tools)
 40 passed, 0 failed   (static gate on the generator)
 ```
-
-Load `tower-castle-defense.sb3` in scratch.mit.edu or TurboWarp to play it yourself.
 
 ## Tool census
 
