@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.sessions/
+scratch-unified-spy/
+*.log
+.DS_Store
+node_modules/
+.smoke_sidecar.mjs
+.omc/
+.mcp.json
+upstream-scratch-mcp/
+upstream-scratch4js/
+upstream-scratchpy-studio/
+tower-castle-defense.sb3

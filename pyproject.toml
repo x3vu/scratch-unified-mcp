@@ -1,0 +1,23 @@
+[project]
+name = "scratch-unified-mcp"
+version = "1.0.0"
+description = "Unified Scratch MCP: uukelele/scratch-mcp + scratch4js + scratchpy-studio."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp>=3.4.4",
+    "httpx>=0.28.1",
+    "python-dotenv>=1.2.2",
+    "scratchattach==3.0.0b3",
+]
+
+[project.scripts]
+scratch-unified = "scratch_unified.server:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["scratch_unified*"]
