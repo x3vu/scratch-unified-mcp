@@ -716,6 +716,26 @@ don't fail the build).
   needs no oracle — `duplicateVariable` gives each clone its own value
   (rule 6), so there is no shared bucket to regress.
 
+### 10.6 Phase 3a media surface (added 2026-09-05)
+
+- `sb3_vm_pen_png` → `vm_pen_png` — 480×360 software pen raster
+  (Bresenham strokes with round caps from `penAttributes.color4f` +
+  diameter) exported via `sharp` (already a sidecar dep) as PNG base64
+  + non-transparent pixel count. Pen strokes only; sprites never render.
+- `sb3_vm_mix_wav` → `vm_mix_wav` — offline mix of every `playSound`
+  since load at its project-timer offset, summed to 16-bit mono WAV
+  (22050 Hz). PCM-16 assets decode via pure RIFF parse; ADPCM legacy
+  assets are recorded but skipped (documented). Volume/pitch effects
+  approximate.
+- Monitor push — `MONITORS_UPDATE` subscription emits one debug
+  `monitor` event per changed monitor per tick (bounded by the log cap).
+- Color touching — `isTouchingColor` on the stub samples the pen
+  raster for the target RGB inside the sprite's box (tolerance 30);
+  `colorIsTouchingColor` mask approximated as target-present.
+- Harness §"phase 3a": PNG magic + transparency on the pen-less game,
+  RIFF/WAVE magic + event count on the mix, monitor events in a post-flag
+  run. 41/41 live.
+
 ### 10.5 Phase 2 debug surface (added 2026-09-05)
 
 Four more tools, all live-tested in `test_runtime.py` §"phase 2":

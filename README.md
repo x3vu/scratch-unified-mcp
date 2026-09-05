@@ -2,7 +2,7 @@
 
 The first standalone headless Scratch VM over MCP — plus every tool an AI agent needs to build, playtest, and publish Scratch projects without opening a browser.
 
-110 tools. One stdio command. Zero name collisions.
+112 tools. One stdio command. Zero name collisions.
 
 ```
 MCP client ──stdio──▶ python3 -m scratch_unified
@@ -48,13 +48,13 @@ cd upstream-scratch4js && pnpm install && pnpm build
 
 ```bash
 python3 tests/test_offline.py   # 34 checks, no network, no credentials
-python3 tests/test_runtime.py   # 26 checks, headless VM playtest (see below)
+python3 tests/test_runtime.py   # 41 checks, headless VM playtest (see below)
 python3 build_tower_game.py     # 40-check static gate, regenerates the demo .sb3
 ```
 
 ## The headless VM loop
 
-Six core tools plus four debug tools, all proxied to a lazily-spawned Node sidecar (TurboWarp `scratch-vm`, interpreted mode, stdout muted so MCP framing stays clean):
+Six core tools, debug tools, and media tools, all proxied to a lazily-spawned Node sidecar (TurboWarp `scratch-vm`, interpreted mode, stdout muted so MCP framing stays clean):
 
 | Tool | What it does |
 |---|---|
@@ -68,6 +68,10 @@ Six core tools plus four debug tools, all proxied to a lazily-spawned Node sidec
 | `sb3_vm_monitors` | Full monitor table (visible or not) — watch a variable without pixels |
 | `sb3_vm_step_frame` | Exactly one frame + before/after counts + delta (new threads, events that tick) |
 | `sb3_vm_seed` | Deterministic PRNG (mulberry32 over `Math.random`; scratch-vm has no seedable RNG). Same seed, same run |
+| `sb3_vm_watch` | Poll-and-diff variable watcher: old/new/changed per key, per-clone capable |
+| `sb3_vm_stub_calls` | Recorded pen/sound stub calls since load |
+| `sb3_vm_pen_png` | Pen raster (480×360 software canvas) as PNG base64 + pixel count. Strokes only |
+| `sb3_vm_mix_wav` | Offline sound mix as WAV base64: every play at its timer offset, volume/pitch approximate |
 
 Headless gaps are patched, not hidden: distance-based touching fallback (no renderer means every `touching` returns `false` upstream), sprite-click shim, broadcast logging via wrapped `startHats`, interpreter mode to dodge a JIT `pickrandom` false-alarm. Details: `upstream-scratch4js/packages/scratch-mcp/src/runtime.js`.
 
@@ -77,15 +81,15 @@ Headless gaps are patched, not hidden: distance-based touching fallback (no rend
 
 ```
 34 passed, 0 failed   (offline: tool surface, sessions, spy round-trip, git diff)
-34 passed, 0 failed   (runtime: full playtest + debug tools, live VM)
-36 passed, 0 failed   (static gate on the generator)
+41 passed, 0 failed   (runtime: full playtest + debug + phase-3a media tools, live VM)
+40 passed, 0 failed   (static gate on the generator)
 ```
 
 Load `tower-castle-defense.sb3` in scratch.mit.edu or TurboWarp to play it yourself.
 
 ## Tool census
 
-`social_*` 20 · `project_*` 18 · `spy_*` 14 · `sb3_*` 58 = **110**, asserted by the offline suite. Full per-tool reference: `docs/IDENTIFIERS.md`. Architecture: `docs/ARCHITECTURE.md`. What the VM research found (and what it corrected): `docs/RESEARCH-HEADLESS-RUNTIME.md`. Build notes and every trap the game taught us: `docs/HANDOFF.md`.
+`social_*` 20 · `project_*` 18 · `spy_*` 14 · `sb3_*` 60 = **112**, asserted by the offline suite. Full per-tool reference: `docs/IDENTIFIERS.md`. Architecture: `docs/ARCHITECTURE.md`. What the VM research found (and what it corrected): `docs/RESEARCH-HEADLESS-RUNTIME.md`. Build notes and every trap the game taught us: `docs/HANDOFF.md`.
 
 ## Layout
 

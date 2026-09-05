@@ -559,24 +559,31 @@ def build():
 
     # 1) publish position each frame into THIS clone's slot (the arrows scan
     #    the lists for the first slot with HP > 0).
+    # NOTE: sb3 input names here matter — data_replaceitemoflist takes
+    # INDEX (slot) + ITEM (value), data_itemoflist takes INDEX. Emitting
+    # ITEM/VALUE made every list read return '' (Cast.toListIndex(undefined)
+    # => LIST_INVALID) and every write silently no-op: EnemyXList stayed
+    # frozen at append values, arrows homed to the origin, and "HP < 1"
+    # read 0 so the FIRST touch insta-killed — the old wave-1 harness
+    # passed only because wave-1 orcs have 1 HP.
     rex = B(e, "data_replaceitemoflist",
-            inputs={"ITEM": var_rep(e, None, "MyIndex", idx),
-                    "VALUE": [3, B(e, "motion_xposition"), [4, "0"]]},
+            inputs={"INDEX": var_rep(e, None, "MyIndex", idx),
+                    "ITEM": [3, B(e, "motion_xposition"), [4, "0"]]},
             fields={"LIST": ["EnemyXList", v["EnemyXList"]]})
+    e["blocks"][e["blocks"][rex]["inputs"]["INDEX"][1]]["parent"] = rex
     e["blocks"][e["blocks"][rex]["inputs"]["ITEM"][1]]["parent"] = rex
-    e["blocks"][e["blocks"][rex]["inputs"]["VALUE"][1]]["parent"] = rex
     rey = B(e, "data_replaceitemoflist",
-            inputs={"ITEM": var_rep(e, None, "MyIndex", idx),
-                    "VALUE": [3, B(e, "motion_yposition"), [4, "0"]]},
+            inputs={"INDEX": var_rep(e, None, "MyIndex", idx),
+                    "ITEM": [3, B(e, "motion_yposition"), [4, "0"]]},
             fields={"LIST": ["EnemyYList", v["EnemyYList"]]})
+    e["blocks"][e["blocks"][rey]["inputs"]["INDEX"][1]]["parent"] = rey
     e["blocks"][e["blocks"][rey]["inputs"]["ITEM"][1]]["parent"] = rey
-    e["blocks"][e["blocks"][rey]["inputs"]["VALUE"][1]]["parent"] = rey
 
     # 2) hit-check: arrow contact drains THIS clone's HP slot; at 0, pay out
     #    and vanish. (headless touching: sidecar renderer shim)
     def _hp_item():
         return B(e, "data_itemoflist",
-                 inputs={"ITEM": var_rep(e, None, "MyIndex", idx)},
+                 inputs={"INDEX": var_rep(e, None, "MyIndex", idx)},
                  fields={"LIST": ["MyHPList", v["MyHPList"]]})
 
     ifh = B(e, "control_if")
@@ -586,22 +593,22 @@ def build():
     e["blocks"][e["blocks"][tch]["inputs"]["TOUCHINGOBJECTMENU"][1]]["parent"] = tch
     e["blocks"][ifh]["inputs"]["CONDITION"] = [2, tch]
     hpitem1 = _hp_item()
-    e["blocks"][e["blocks"][hpitem1]["inputs"]["ITEM"][1]]["parent"] = hpitem1
+    e["blocks"][e["blocks"][hpitem1]["inputs"]["INDEX"][1]]["parent"] = hpitem1
     subhp = B(e, "operator_subtract",
               inputs={"NUM1": [3, hpitem1, [4, "0"]], "NUM2": NUM(1)})
     e["blocks"][hpitem1]["parent"] = subhp
     chH = B(e, "data_replaceitemoflist",
-            inputs={"ITEM": var_rep(e, None, "MyIndex", idx),
-                    "VALUE": [3, subhp, [4, "0"]]},
+            inputs={"INDEX": var_rep(e, None, "MyIndex", idx),
+                    "ITEM": [3, subhp, [4, "0"]]},
             fields={"LIST": ["MyHPList", v["MyHPList"]]})
     e["blocks"][subhp]["parent"] = chH
-    e["blocks"][e["blocks"][chH]["inputs"]["ITEM"][1]]["parent"] = chH
+    e["blocks"][e["blocks"][chH]["inputs"]["INDEX"][1]]["parent"] = chH
     baw = bcast(e, "ArrowSpent")
     ifd = B(e, "control_if")
     chain(e, [chH, baw, ifd])
     sub(e, ifh, "SUBSTACK", chH)
     hpitem2 = _hp_item()
-    e["blocks"][e["blocks"][hpitem2]["inputs"]["ITEM"][1]]["parent"] = hpitem2
+    e["blocks"][e["blocks"][hpitem2]["inputs"]["INDEX"][1]]["parent"] = hpitem2
     lte = B(e, "operator_lt", parent=ifd,
             inputs={"OPERAND1": [3, hpitem2, [4, "0"]],
                     "OPERAND2": NUM(1)})
@@ -617,9 +624,9 @@ def build():
     # mark the slot dead FIRST (HP -> 0) so arrow targeting skips it even
     # before the clone finishes its fade-out
     hpk0 = B(e, "data_replaceitemoflist",
-             inputs={"ITEM": var_rep(e, None, "MyIndex", idx), "VALUE": NUM(0)},
+             inputs={"INDEX": var_rep(e, None, "MyIndex", idx), "ITEM": NUM(0)},
              fields={"LIST": ["MyHPList", v["MyHPList"]]})
-    e["blocks"][e["blocks"][hpk0]["inputs"]["ITEM"][1]]["parent"] = hpk0
+    e["blocks"][e["blocks"][hpk0]["inputs"]["INDEX"][1]]["parent"] = hpk0
     first2 = removed_seq(e, None)
     dl2 = B(e, "control_delete_this_clone")
     chain(e, [hpk0, chG, chS, plc, first2])
@@ -628,7 +635,13 @@ def build():
         tail2 = e["blocks"][tail2]["next"]
     e["blocks"][tail2]["next"] = dl2
     e["blocks"][dl2]["parent"] = tail2
-    sub(e, ifd, "SUBSTACK", chG)
+    # The zero-write must lead the kill chain so arrow targeting skips this
+    # slot the instant the clone dies (HP-1 alone only zeroes 1-HP orcs).
+    # NOTE: this SUBSTACK head is the fix for the orphaned-slot bug — the
+    # earlier build pointed it at chG, so hpk0 (and hpe0 below) were
+    # unreachable dead blocks and every ESCAPED orc left a live HP>0 ghost
+    # slot at x=196 that hijacked all arrow homing.
+    sub(e, ifd, "SUBSTACK", hpk0)
 
     # 3) arrival-check: crossed the castle wall -> lose a life, vanish;
     #    otherwise take one step toward it.
@@ -640,9 +653,9 @@ def build():
     e["blocks"][ifx]["inputs"]["CONDITION"] = [2, gtx]
     # mark the slot dead on escape too (same liveness rule)
     hpe0 = B(e, "data_replaceitemoflist",
-             inputs={"ITEM": var_rep(e, None, "MyIndex", idx), "VALUE": NUM(0)},
+             inputs={"INDEX": var_rep(e, None, "MyIndex", idx), "ITEM": NUM(0)},
              fields={"LIST": ["MyHPList", v["MyHPList"]]})
-    e["blocks"][e["blocks"][hpe0]["inputs"]["ITEM"][1]]["parent"] = hpe0
+    e["blocks"][e["blocks"][hpe0]["inputs"]["INDEX"][1]]["parent"] = hpe0
     chL = B(e, "data_changevariableby", inputs={"VALUE": NUM(-1)},
             fields={"VARIABLE": ["Lives", v["Lives"]]})
     first_removed = removed_seq(e, None)
@@ -653,7 +666,7 @@ def build():
         tail = e["blocks"][tail]["next"]
     e["blocks"][tail]["next"] = dl
     e["blocks"][dl]["parent"] = tail
-    sub(e, ifx, "SUBSTACK", chL)
+    sub(e, ifx, "SUBSTACK", hpe0)
     sub(e, ifx, "SUBSTACK2", mv)
 
     # Per-frame pacing wait (see the Arrow loop): without a yielding block
@@ -718,9 +731,9 @@ def build():
 
     def _list_item(lname, lid):
         r = B(a, "data_itemoflist",
-              inputs={"ITEM": [3, _var_reporter("T", tidx), [4, "1"]]},
+              inputs={"INDEX": [3, _var_reporter("T", tidx), [4, "1"]]},
               fields={"LIST": [lname, lid]})
-        a["blocks"][a["blocks"][r]["inputs"]["ITEM"][1]]["parent"] = r
+        a["blocks"][a["blocks"][r]["inputs"]["INDEX"][1]]["parent"] = r
         return r
 
     # scan: set T=1; repeat until T > len OR item T of MyHPList > 0 { T += 1 }
@@ -787,61 +800,66 @@ def build():
               fields={"VARIABLE": ["dy", dy_local]})
     a["blocks"][sub2]["parent"] = setdy
 
-    # 3. direction calc: if dx=0 -> 90 (dy>0) or -90 (dy<=0); else atan(dy/dx), flip+180 if dx<0
-    # outer if/else on (dx=0)
-    ifdx0 = B(a, "control_if_else", parent=fo)
-    dx_rep2 = _var_reporter("dx", dx_local)
-    eqdx0 = B(a, "operator_equals", parent=ifdx0,
-              inputs={"OPERAND1": [3, dx_rep2, [4, "0"]],
+    # 3. direction calc. Scratch moves along (sin d, cos d) with d=0 meaning
+    # up, so to point at (dx, dy) you need d = atan(dx/dy), +180 when dy < 0
+    # (dy < 0 puts the target below: cos d must be negative). The first build
+    # got the axes backwards (atan(dy/dx), flip on dx<0) and fed turnright the
+    # wrong input name (DIRECTION vs DEGREES), so cross-lane arrows silently
+    # flew AWAY from their target while same-row shots only worked by luck.
+    # outer if/else on (dy=0): target dead level -> point 90 (right) / -90 (left)
+    ifdy0 = B(a, "control_if_else", parent=fo)
+    dy_rep0 = _var_reporter("dy", dy_local)
+    eqdy0 = B(a, "operator_equals", parent=ifdy0,
+              inputs={"OPERAND1": [3, dy_rep0, [4, "0"]],
                       "OPERAND2": NUM(0)})
-    a["blocks"][dx_rep2]["parent"] = eqdx0
-    a["blocks"][ifdx0]["inputs"]["CONDITION"] = [2, eqdx0]
+    a["blocks"][dy_rep0]["parent"] = eqdy0
+    a["blocks"][ifdy0]["inputs"]["CONDITION"] = [2, eqdy0]
 
-    # ifdx0 then-branch: nested if (dy>0) -> point 90 else point -90
-    ifdypos = B(a, "control_if_else", parent=ifdx0)
-    dy_rep2 = _var_reporter("dy", dy_local)
-    gtdy = B(a, "operator_gt", parent=ifdypos,
-             inputs={"OPERAND1": [3, dy_rep2, [4, "0"]],
+    # then-branch: dy=0 -> point 90 if dx>0 else point -90
+    ifdxpos = B(a, "control_if_else", parent=ifdy0)
+    dx_rep0 = _var_reporter("dx", dx_local)
+    gtdx = B(a, "operator_gt", parent=ifdxpos,
+             inputs={"OPERAND1": [3, dx_rep0, [4, "0"]],
                      "OPERAND2": NUM(0)})
-    a["blocks"][dy_rep2]["parent"] = gtdy
-    a["blocks"][ifdypos]["inputs"]["CONDITION"] = [2, gtdy]
+    a["blocks"][dx_rep0]["parent"] = gtdx
+    a["blocks"][ifdxpos]["inputs"]["CONDITION"] = [2, gtdx]
     pdir90 = B(a, "motion_pointindirection", inputs={"DIRECTION": NUM(90)})
     pdirN90 = B(a, "motion_pointindirection", inputs={"DIRECTION": NUM(-90)})
-    sub(a, ifdypos, "SUBSTACK", pdir90)
-    sub(a, ifdypos, "SUBSTACK2", pdirN90)
+    sub(a, ifdxpos, "SUBSTACK", pdir90)
+    sub(a, ifdxpos, "SUBSTACK2", pdirN90)
 
-    # ifdx0 else-branch: atan(dy/dx), then if dx<0: change direction by 180
-    dy_rep3 = _var_reporter("dy", dy_local)
+    # else-branch: atan(dx/dy), then if dy<0: turn right 180 (DEGREES!)
     dx_rep3 = _var_reporter("dx", dx_local)
-    div_dydx = B(a, "operator_divide",
-                 inputs={"NUM1": [3, dy_rep3, [4, "0"]],
-                         "NUM2": [3, dx_rep3, [4, "0"]]})
-    a["blocks"][dy_rep3]["parent"] = div_dydx
-    a["blocks"][dx_rep3]["parent"] = div_dydx
+    dy_rep3 = _var_reporter("dy", dy_local)
+    div_dxdy = B(a, "operator_divide",
+                 inputs={"NUM1": [3, dx_rep3, [4, "0"]],
+                         "NUM2": [3, dy_rep3, [4, "0"]]})
+    a["blocks"][dx_rep3]["parent"] = div_dxdy
+    a["blocks"][dy_rep3]["parent"] = div_dxdy
     atan_op = B(a, "operator_mathop", fields={"OPERATOR": ["atan", None]},
-                inputs={"NUM": [3, div_dydx, [4, "0"]]})
-    a["blocks"][div_dydx]["parent"] = atan_op
+                inputs={"NUM": [3, div_dxdy, [4, "0"]]})
+    a["blocks"][div_dxdy]["parent"] = atan_op
     pdir_atan = B(a, "motion_pointindirection",
                   inputs={"DIRECTION": [3, atan_op, [4, "90"]]})
     a["blocks"][atan_op]["parent"] = pdir_atan
-    ifdxneg = B(a, "control_if", parent=ifdx0)
-    dx_rep4 = _var_reporter("dx", dx_local)
-    ltdxneg = B(a, "operator_lt", parent=ifdxneg,
-                inputs={"OPERAND1": [3, dx_rep4, [4, "0"]],
+    ifdyneg = B(a, "control_if", parent=ifdy0)
+    dy_rep4 = _var_reporter("dy", dy_local)
+    ltdyneg = B(a, "operator_lt", parent=ifdyneg,
+                inputs={"OPERAND1": [3, dy_rep4, [4, "0"]],
                         "OPERAND2": NUM(0)})
-    a["blocks"][dx_rep4]["parent"] = ltdxneg
-    a["blocks"][ifdxneg]["inputs"]["CONDITION"] = [2, ltdxneg]
+    a["blocks"][dy_rep4]["parent"] = ltdyneg
+    a["blocks"][ifdyneg]["inputs"]["CONDITION"] = [2, ltdyneg]
     turn180 = B(a, "motion_turnright",
-                inputs={"DIRECTION": NUM(180)})
-    sub(a, ifdxneg, "SUBSTACK", turn180)
-    # chain within else-branch: pdir_atan -> ifdxneg
-    a["blocks"][pdir_atan]["next"] = ifdxneg
-    a["blocks"][ifdxneg]["parent"] = pdir_atan
-    # ifdx0 else-branch points to pdir_atan
-    sub(a, ifdx0, "SUBSTACK2", pdir_atan)
+                inputs={"DEGREES": NUM(180)})
+    sub(a, ifdyneg, "SUBSTACK", turn180)
+    # chain within else-branch: pdir_atan -> ifdyneg
+    a["blocks"][pdir_atan]["next"] = ifdyneg
+    a["blocks"][ifdyneg]["parent"] = pdir_atan
+    # ifdy0 else-branch points to pdir_atan
+    sub(a, ifdy0, "SUBSTACK2", pdir_atan)
 
-    # ifdx0 then-branch points to ifdypos
-    sub(a, ifdx0, "SUBSTACK", ifdypos)
+    # ifdy0 then-branch points to ifdxpos
+    sub(a, ifdy0, "SUBSTACK", ifdxpos)
 
     # 4. move 12 steps
     mv = B(a, "motion_movesteps", inputs={"STEPS": NUM(12)})
@@ -861,8 +879,8 @@ def build():
     # control_wait makes the body yield once per frame (official-Scratch
     # pacing) in both the JIT and interpreter paths.
     wta = B(a, "control_wait", inputs={"DURATION": NUM(0.03)})
-    # homing chain lives in iff's SUBSTACK: setdx -> setdy -> ifdx0 -> mv
-    chain(a, [setdx, setdy, ifdx0, mv])
+    # homing chain lives in iff's SUBSTACK: setdx -> setdy -> ifdy0 -> mv
+    chain(a, [setdx, setdy, ifdy0, mv])
     sub(a, iff, "SUBSTACK", setdx)
     # forever body: scan -> iff(home | fly straight) -> edge-check -> wait
     chain(a, [setT, rpu, iff, ife, wta])
@@ -1010,8 +1028,8 @@ OPCODE_INPUTS = {
     "motion_glidesecstoxy":  ("SECS", "X", "Y"),
     "motion_movesteps":      ("STEPS",),
     "motion_pointindirection": ("DIRECTION",),
-    "motion_turnright":       ("DIRECTION",),
-    "motion_turnleft":        ("DIRECTION",),
+    "motion_turnright":       ("DEGREES",),
+    "motion_turnleft":        ("DEGREES",),
     "control_wait":          ("DURATION",),
     "control_repeat":        ("TIMES",),
     "control_if":            ("CONDITION",),
@@ -1019,8 +1037,12 @@ OPCODE_INPUTS = {
     "data_setvariableto":    ("VALUE",),
     "data_changevariableby": ("VALUE",),
     "data_addtolist":        ("ITEM",),  # LIST is a field, not an input
-    "data_replaceitemoflist": ("ITEM", "VALUE"),
-    "data_itemoflist":       ("ITEM",),
+    # data_replaceitemoflist = INDEX (slot) + ITEM (value); data_itemoflist
+    # = INDEX. Emitting ITEM/VALUE silently no-ops every read/write
+    # (Cast.toListIndex(undefined) => LIST_INVALID) — caught live: lists
+    # frozen at append values, arrows homing to the origin.
+    "data_replaceitemoflist": ("INDEX", "ITEM"),
+    "data_itemoflist":       ("INDEX",),
     "data_lengthoflist":     (),  # LIST is a field
     "data_deletealloflist":  (),  # LIST is a field
     "control_repeat_until":  ("CONDITION",),
@@ -1192,6 +1214,25 @@ def _check_static(data):
     out.append(Check("list_field_not_input", not bad_list_field,
                      f"bad: {bad_list_field[:5]}" if bad_list_field else "",
                      "list ops must reference the list via fields.LIST=[name,id], never inputs.LIST — the VM crashes on input-encoded list refs"))
+    # List INDEX/VALUE naming: data_itemoflist and data_replaceitemoflist
+    # take the SLOT as input INDEX and (for replace) the VALUE as input ITEM.
+    # Emitting ITEM/VALUE makes Cast.toListIndex(undefined) return
+    # LIST_INVALID: every read returns '' and every write silently no-ops.
+    # (caught this exact bug live: EnemyXList frozen at append values while
+    # arrows homed to the origin and "HP < 1" read 0, insta-killing on the
+    # first touch — the wave-1 harness passed only because those orcs have
+    # 1 HP and the broken read made HP look like 0 < 1.)
+    bad_list_idx = []
+    for t in data["targets"]:
+        for bid, b in t["blocks"].items():
+            if b["opcode"] == "data_itemoflist" and "INDEX" not in b.get("inputs", {}):
+                bad_list_idx.append((t["name"], bid[:6], b["opcode"], sorted(b.get("inputs", {}).keys())))
+            if b["opcode"] == "data_replaceitemoflist" and \
+                    ("INDEX" not in b.get("inputs", {}) or "ITEM" not in b.get("inputs", {})):
+                bad_list_idx.append((t["name"], bid[:6], b["opcode"], sorted(b.get("inputs", {}).keys())))
+    out.append(Check("list_index_input_names", not bad_list_idx,
+                     f"bad: {bad_list_idx[:5]}" if bad_list_idx else "",
+                     "list index blocks must use inputs INDEX (slot) and ITEM (value) — ITEM/VALUE silently no-ops all list reads/writes"))
     bad_op = []
     for t in data["targets"]:
         for bid, b in t["blocks"].items():
@@ -1534,6 +1575,48 @@ def _slot_opcode(target, value):
     return None
 
 
+def _slot_block(target, value):
+    """Return the first non-shadow block dict in the subtree rooted at
+    `value`, or None if the subtree is just a literal."""
+    seen = set()
+    stack = [value]
+    while stack:
+        v = stack.pop()
+        if not (isinstance(v, list) and len(v) >= 2):
+            continue
+        body = v[1]
+        if not isinstance(body, str) or body in seen or body not in target["blocks"]:
+            continue
+        seen.add(body)
+        return target["blocks"][body]
+    return None
+
+
+def _slot_varname(target, value):
+    """Return the variable display name referenced by the first
+    data_variable block in the subtree rooted at `value`, or None."""
+    seen = set()
+    stack = [value]
+    while stack:
+        v = stack.pop()
+        if not (isinstance(v, list) and len(v) >= 2):
+            continue
+        body = v[1]
+        if not isinstance(body, str) or body in seen or body not in target["blocks"]:
+            continue
+        seen.add(body)
+        b = target["blocks"][body]
+        if b["opcode"] == "data_variable":
+            return (b.get("fields", {}).get("VARIABLE") or [None])[0]
+        nxt = b.get("next")
+        if isinstance(nxt, str):
+            stack.append([2, nxt])
+        for inp_val in b.get("inputs", {}).values():
+            if isinstance(inp_val, list):
+                stack.append(inp_val)
+    return None
+
+
 def _simulate_spawner(data):
     """Walk the Enemy's whenbroadcastreceived[StartWave] script. Compute
     the value of `TIMES` in `control_repeat`, count clone_create calls,
@@ -1823,6 +1906,46 @@ def _simulate_arrow_hits(data):
     out.append(Check("arrow_dx_dy_computed", has_dx_sub and has_dy_sub,
                       f"dx_sub={has_dx_sub} dy_sub={has_dy_sub}",
                       "Arrow must compute dx=itemT(EnemyXList)-xposition and dy=itemT(EnemyYList)-yposition via operator_subtract"))
+
+    # Arrow: direction math must be d = atan(dx/dy) with a +180 flip when
+    # dy<0 (Scratch moves along (sin d, cos d), d=0 = up). The first build
+    # did atan(dy/dx) + flip-on-dx<0 — cross-lane arrows flew AWAY from their
+    # target. Also motion_turnright's input is DEGREES (VM reads args.DEGREES;
+    # the old DIRECTION name silently no-oped the flip).
+    has_atan_dx_dy = False
+    for bid, b in arrow["blocks"].items():
+        if b["opcode"] != "operator_mathop":
+            continue
+        opk = (b.get("fields", {}).get("OPERATOR") or [None])[0]
+        if opk != "atan":
+            continue
+        num = b.get("inputs", {}).get("NUM")
+        div = _slot_block(arrow, num)
+        if div is None or div["opcode"] != "operator_divide":
+            continue
+        n1 = _slot_varname(arrow, div.get("inputs", {}).get("NUM1"))
+        n2 = _slot_varname(arrow, div.get("inputs", {}).get("NUM2"))
+        if n1 == "dx" and n2 == "dy":
+            has_atan_dx_dy = True
+    has_flip_dy_lt0 = False
+    for bid, b in arrow["blocks"].items():
+        if b["opcode"] != "operator_lt":
+            continue
+        if _slot_varname(arrow, b.get("inputs", {}).get("OPERAND1")) == "dy":
+            has_flip_dy_lt0 = True
+    has_turn180 = False
+    for bid, b in arrow["blocks"].items():
+        if b["opcode"] != "motion_turnright":
+            continue
+        deg = b.get("inputs", {}).get("DEGREES")
+        try:
+            if _num(_eval_input(deg, arrow, {}, {}, None)) == 180:
+                has_turn180 = True
+        except Exception:
+            pass
+    out.append(Check("arrow_atan_dx_over_dy", has_atan_dx_dy and has_flip_dy_lt0 and has_turn180,
+                      f"atan(dx/dy)={has_atan_dx_dy} dy<0flip={has_flip_dy_lt0} turn180(DEGREES)={has_turn180}",
+                      "Arrow must compute atan(dx/dy), flip 180 when dy<0 via motion_turnright with DEGREES input"))
 
     # Enemy: assert a control_start_as_clone hat has a SUBSTACK chain
     # containing control_forever with replaceitemoflist EnemyXList + EnemyYList

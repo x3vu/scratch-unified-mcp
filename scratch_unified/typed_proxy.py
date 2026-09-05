@@ -320,6 +320,16 @@ def sb3_vm_stub_calls() -> str:
     return SIDECAR.call_tool("vm_stub_calls", {})
 
 
+def sb3_vm_pen_png() -> str:
+    """Pen raster as PNG base64 + non-transparent pixel count. (proxied)"""
+    return SIDECAR.call_tool("vm_pen_png", {})
+
+
+def sb3_vm_mix_wav() -> str:
+    """Offline sound mix as WAV base64 + event count + seconds. (proxied)"""
+    return SIDECAR.call_tool("vm_mix_wav", {})
+
+
 def sb3_screenshot() -> str:
     """Capture the live TurboWarp stage as PNG (base64-wrapped note). (proxied)"""
     return SIDECAR.call_tool("screenshot", {})
@@ -343,6 +353,6 @@ SB3_TOOL_DEFS = [
     sb3_stop_project, sb3_vm_load, sb3_vm_green_flag, sb3_vm_run,
     sb3_vm_stop, sb3_vm_state, sb3_vm_input, sb3_vm_threads,
     sb3_vm_monitors, sb3_vm_step_frame, sb3_vm_seed, sb3_vm_watch,
-    sb3_vm_stub_calls,
+    sb3_vm_stub_calls, sb3_vm_pen_png, sb3_vm_mix_wav,
     sb3_screenshot, sb3_screenshot_jpeg,
 ]

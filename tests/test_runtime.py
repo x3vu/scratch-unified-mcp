@@ -433,6 +433,40 @@ idle_state = parse_state(asyncio.run(call_text("sb3_vm_state", {})))
 check("threadsRunning is 0 after stop (monitor threads filtered)",
       idle_state.get("threadsRunning") == 0)
 
+# ------------------------------------------------------------------ phase 3a
+
+section("phase 3a: pen raster / wav mix / monitor push")
+
+# Pen rasterizer: draw nothing — the tower game uses no pen blocks — so
+# the canvas must be transparent and the PNG must decode to 480x360.
+pen = parse_state(asyncio.run(call_text("sb3_vm_pen_png", {})))
+check("vm_pen_png returns dimensions + base64 + count",
+      pen.get("width") == 480 and pen.get("height") == 360
+      and isinstance(pen.get("pngBase64"), str) and isinstance(pen.get("nonEmpty"), int))
+import base64 as _b64
+raw = _b64.b64decode(pen["pngBase64"])
+check("pen PNG decodes with PNG magic", raw[:8] == b"\x89PNG\r\n\x1a\n")
+check("empty game leaves pen canvas transparent", pen.get("nonEmpty") == 0)
+
+# WAV mixer: the run above played build/coin/shoot sounds through the
+# soundBank stub, so the mix must contain events and valid WAV bytes.
+mix = parse_state(asyncio.run(call_text("sb3_vm_mix_wav", {})))
+check("vm_mix_wav returns rate + seconds + events + base64",
+      mix.get("rate") == 22050 and isinstance(mix.get("seconds"), (int, float))
+      and isinstance(mix.get("events"), int) and isinstance(mix.get("wavBase64"), str))
+check("mix captured sound plays", mix.get("events", 0) > 0)
+wraw = _b64.b64decode(mix["wavBase64"])
+check("mix decodes with RIFF/WAVE magic", wraw[:4] == b"RIFF" and wraw[8:12] == b"WAVE")
+
+# Monitor push: Gold/Lives/Wave/Score are monitored, so stepping after a
+# change must surface debug monitor events in the timeline.
+asyncio.run(call_text("sb3_vm_green_flag", {}))
+mon_run = parse_state(asyncio.run(call_text(
+    "sb3_vm_run", {"seconds": 0.5, "frames": 0, "untilIdle": False, "paced": True})))
+mon_kinds = {(e.get("type"), e.get("label")) for e in mon_run.get("events", [])}
+check("monitor push events present in run timeline",
+      any(k == "monitor" for k, _ in mon_kinds))
+
 
 # ------------------------------------------------------------------ escape path
 
