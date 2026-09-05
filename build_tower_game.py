@@ -414,8 +414,22 @@ def build():
     # spawner
     h = B(e, "event_whenbroadcastreceived",
           fields={"BROADCAST_OPTION": ["StartWave", b_sw]}, top=True, x=10, y=10)
+    # Reset the per-clone slot lists at wave start. They are append-only
+    # (dead slots zeroed, never removed) so by wave 9 they hold 96+ dead
+    # entries and EVERY arrow's first-live T-scan walks the whole graveyard
+    # every frame. TurboWarp's compiled-loop interrupt parks that long
+    # non-yielding scan at ~1 iteration per frame, so under load an arrow
+    # spends seconds inside the scan and never moves — kills collapsed.
+    # Every prior clone is dead/escaped at a wave boundary, so clearing is
+    # safe: fresh clones re-register from slot 1 and scans stay <= wave size.
+    dax = B(e, "data_deletealloflist",
+            fields={"LIST": ["EnemyXList", v["EnemyXList"]]})
+    day = B(e, "data_deletealloflist",
+            fields={"LIST": ["EnemyYList", v["EnemyYList"]]})
+    dah = B(e, "data_deletealloflist",
+            fields={"LIST": ["MyHPList", v["MyHPList"]]})
     rep = B(e, "control_repeat")
-    chain(e, [h, rep])
+    chain(e, [h, dax, day, dah, rep])
     # NOTE: arithmetic ops take NUM1/NUM2 (not OPERAND1/2); the VM ignores
     # wrongly-named inputs, which made repeat TIMES evaluate to 0.
     add = B(e, "operator_add", parent=rep,
@@ -766,9 +780,15 @@ def build():
                         "OPERAND2": [3, lenr2, [4, "0"]]})
     a["blocks"][a["blocks"][gtTlen2]["inputs"]["OPERAND1"][1]]["parent"] = gtTlen2
     a["blocks"][lenr2]["parent"] = gtTlen2
+    # NOTE: `operator_not` takes input OPERAND (not OPERAND1). With OPERAND1
+    # the not() block read args.OPERAND = undefined -> always TRUE, so the
+    # iff below ALWAYS took the home branch; arrows whose target died kept
+    # homing to stale dead-orc slots instead of flying straight to the edge,
+    # the arrow population exploded, frames crawled, and the game died by
+    # wave 9 even with 4 towers.
     notb = B(a, "operator_not")
     a["blocks"][gtTlen2]["parent"] = notb
-    a["blocks"][notb]["inputs"] = {"OPERAND1": [2, gtTlen2]}
+    a["blocks"][notb]["inputs"] = {"OPERAND": [2, gtTlen2]}
     iff = B(a, "control_if_else", inputs={"CONDITION": [2, notb]})
     a["blocks"][notb]["parent"] = iff
     mv2 = B(a, "motion_movesteps", inputs={"STEPS": NUM(12)})
@@ -1021,6 +1041,7 @@ OPCODE_INPUTS = {
     "operator_gt":       ("OPERAND1", "OPERAND2"),
     "operator_and":      ("OPERAND1", "OPERAND2"),
     "operator_or":       ("OPERAND1", "OPERAND2"),
+    "operator_not":      ("OPERAND",),  # unary! not() reads OPERAND, not OPERAND1
     "operator_join":     ("STRING1", "STRING2"),
     "operator_mathop":   ("NUM",),
     "operator_random":     ("FROM", "TO"),
@@ -1638,12 +1659,31 @@ def _simulate_spawner(data):
         return [Check("spawner_hat_present", False,
                       "Enemy has no event_whenbroadcastreceived for StartWave",
                       "add `when I receive StartWave` to Enemy")]
-    # follow next: hat -> repeat
+    # follow next: hat -> [data_deletealloflist reset x3] -> repeat
     rep = enemy["blocks"][hat].get("next")
+    while rep and enemy["blocks"][rep]["opcode"] == "data_deletealloflist":
+        rep = enemy["blocks"][rep].get("next")
     if not rep or enemy["blocks"][rep]["opcode"] != "control_repeat":
         return [Check("spawner_after_hat", False,
-                      f"hat next is {rep} (expected control_repeat)",
+                      f"hat next is {rep} (expected control_repeat after list reset)",
                       "spawner hat must chain into control_repeat")]
+    # The per-clone slot lists MUST be cleared before spawning, else the
+    # append-only graveyard grows to 96+ dead slots and every arrow's
+    # first-live scan crawls (compiled-loop interrupt parks it at ~1 iter/
+    # frame) — the wave-9 kill-collapse. Check all three resets are present
+    # between the hat and the repeat.
+    cleared = {"EnemyXList": False, "EnemyYList": False, "MyHPList": False}
+    cur = enemy["blocks"][hat].get("next")
+    while cur and enemy["blocks"][cur]["opcode"] == "data_deletealloflist":
+        lst = enemy["blocks"][cur].get("fields", {}).get("LIST", [None])[0]
+        if lst in cleared:
+            cleared[lst] = True
+        cur = enemy["blocks"][cur].get("next")
+    miss = [k for k, ok in cleared.items() if not ok]
+    out.append(Check("spawner_resets_slot_lists", not miss,
+                     ("" if not miss else f"missing deleteall for {', '.join(miss)} before repeat"),
+                     "clear EnemyXList/EnemyYList/MyHPList at StartWave so arrow scans stay short"))
+    # evaluate TIMES expression in Enemy context, with Wave=1, GameActive=1
     # evaluate TIMES expression in Enemy context, with Wave=1, GameActive=1
     sgame = dict(stage["variables"])
     # override Wave for the test

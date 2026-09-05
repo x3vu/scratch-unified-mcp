@@ -272,14 +272,26 @@ def sb3_vm_state() -> str:
 
 
 def sb3_vm_input(keys: str = "", mouseX: int = 0, mouseY: int = 0, mouseDown: bool = False, answer: str = "") -> str:
-    """Feed keyboard/mouse/answer input to the headless VM. (proxied)"""
+    """Feed keyboard/mouse/answer input to the headless VM. (proxied)
+
+    `keys` accepts a JSON array of {key, isDown?} objects or a single key
+    name (wrapped to a full tap). Anything else that parses to a non-list
+    raises ValueError before touching the sidecar — the sidecar's zod
+    schema would reject it anyway, but failing here gives the shorter,
+    proxy-attributed error.
+    """
     import json as _json
     args: dict = {"mouseX": mouseX, "mouseY": mouseY, "mouseDown": mouseDown}
     if keys:
         try:
-            args["keys"] = _json.loads(keys)
+            parsed = _json.loads(keys)
         except Exception:
-            args["keys"] = [keys]
+            parsed = [{"key": keys}]
+        if isinstance(parsed, dict):
+            parsed = [parsed]
+        if not isinstance(parsed, list):
+            raise ValueError("keys must be a JSON array of {key, isDown?} or a single key name")
+        args["keys"] = parsed
     if answer:
         args["answer"] = answer
     return SIDECAR.call_tool("vm_input", args)
