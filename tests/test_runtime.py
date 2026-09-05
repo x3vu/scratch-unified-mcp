@@ -10,12 +10,11 @@ Mirrors `tests/test_offline.py` style. Skips gracefully if the Node sidecar
 is unavailable (set `SCRATCH_RUNTIME_SKIP=1` to force a no-op run).
 """
 import asyncio
+import base64
 import json
 import os
-import re
 import sys
 import tempfile
-import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -110,17 +109,6 @@ def parse_state(text):
     if "truncated at" in text:
         text = text.split("... [truncated at")[0]
     return json.loads(text)
-
-
-def find_summary_field(state, *path):
-    """Walk a dotted path through the state JSON, return None if any key missing."""
-    cur = state
-    for k in path:
-        if isinstance(cur, dict) and k in cur:
-            cur = cur[k]
-        else:
-            return None
-    return cur
 
 
 def find_stage_var(state, name):
@@ -443,8 +431,7 @@ pen = parse_state(asyncio.run(call_text("sb3_vm_pen_png", {})))
 check("vm_pen_png returns dimensions + base64 + count",
       pen.get("width") == 480 and pen.get("height") == 360
       and isinstance(pen.get("pngBase64"), str) and isinstance(pen.get("nonEmpty"), int))
-import base64 as _b64
-raw = _b64.b64decode(pen["pngBase64"])
+raw = base64.b64decode(pen["pngBase64"])
 check("pen PNG decodes with PNG magic", raw[:8] == b"\x89PNG\r\n\x1a\n")
 check("empty game leaves pen canvas transparent", pen.get("nonEmpty") == 0)
 
@@ -455,7 +442,7 @@ check("vm_mix_wav returns rate + seconds + events + base64",
       mix.get("rate") == 22050 and isinstance(mix.get("seconds"), (int, float))
       and isinstance(mix.get("events"), int) and isinstance(mix.get("wavBase64"), str))
 check("mix captured sound plays", mix.get("events", 0) > 0)
-wraw = _b64.b64decode(mix["wavBase64"])
+wraw = base64.b64decode(mix["wavBase64"])
 check("mix decodes with RIFF/WAVE magic", wraw[:4] == b"RIFF" and wraw[8:12] == b"WAVE")
 
 # Monitor push: Gold/Lives/Wave/Score are monitored, so stepping after a

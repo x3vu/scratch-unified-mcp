@@ -83,7 +83,7 @@ Infra: `SPY_TOOL_DEFS`, `register_spy_tools(mcp)`, `spy_loader.load_spy()`,
 `SPY_PATH`, shared `_server` rooted at
 `$TMPDIR/scratch-unified-spy/default.spy`.
 
-### `sb3_*` — surgery, VM, live, extras (52 = 44 proxied + 8 native)
+### `sb3_*` — surgery, VM, live, extras (60 = 52 proxied + 8 native)
 
 Proxied (`typed_proxy.py` → Node sidecar):
 

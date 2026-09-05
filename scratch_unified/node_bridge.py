@@ -6,7 +6,7 @@ scratch-vm block catalog/schema, the headless TurboWarp VM test loop, and the
 TurboWarp Desktop live-reload bridge + screenshots.
 
 Pattern: spawn `node index.js` once, speak MCP over stdio
-(initialize -> notifications/initialized -> tools/call). The 44 sb3_*
+(initialize -> notifications/initialized -> tools/call). The sb3_*
 tools live as typed functions in `typed_proxy.py` (FastMCP rejects **kwargs
 tools); this module owns the subprocess transport. If Node/deps are missing,
 every sb3_* tool raises a clear "sidecar unavailable" message instead of
@@ -160,7 +160,7 @@ SIDECAR = NodeSidecar()
 
 
 def register_sb3_tools(mcp):
-    """Register the 44 typed sb3_* proxy tools on the FastMCP app."""
+    """Register the typed sb3_* proxy tools on the FastMCP app."""
     from .typed_proxy import SB3_TOOL_DEFS
 
     for fn in SB3_TOOL_DEFS:

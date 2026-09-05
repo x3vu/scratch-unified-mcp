@@ -26,7 +26,7 @@ pain this project removes.
 - **G1 — One command.** A single MCP client entry (`python3 -m
   scratch_unified` over stdio) exposes everything.
 - **G2 — Biggest-leverage toolset.** Keep every tool from all three
-  upstreams that has no equivalent elsewhere: 104 tools total.
+  upstreams that has no equivalent elsewhere: 112 tools total.
 - **G3 — Zero collisions.** Every tool name is unique; upstream A's
   `social_*`/`project_*` names are kept verbatim, scratch4js becomes
   `sb3_*`, scratchpy becomes `spy_*`.
@@ -128,7 +128,7 @@ pain this project removes.
 - Offline suite `tests/test_offline.py`: 34 checks, no network, no
   credentials — tool-surface counts, session-registry parity, spy
   round trip, sb3 unpack/pack/diff, graceful-degradation messages.
-- Full tool census asserted: 20 + 18 + 14 + 52 = 104, no duplicates.
+- Full tool census asserted: 20 + 18 + 14 + 60 = 112, no duplicates.
 - `validate()`-style structural checks wherever we generate `.sb3`
   bytes (see Tower Castle Defense: input-name and broadcast-ID checks).
 
@@ -144,7 +144,7 @@ pain this project removes.
 ## 8. Acceptance criteria
 
 - [ ] One MCP client `command` starts the server (Python stdio).
-- [ ] `tools/list` shows all 104 tools with the names in §5.
+- [ ] `tools/list` shows all 112 tools with the names in §5.
 - [ ] No regression vs each upstream README quickstart.
 - [ ] `python3 tests/test_offline.py` → 34 passed, 0 failed.
 - [ ] Tower Castle Defense `.sb3` loads and plays in Scratch/TurboWarp.

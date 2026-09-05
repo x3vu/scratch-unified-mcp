@@ -10,7 +10,7 @@ touching `build_tower_game.py` again.
 `/Users/blessed/Scratch mcp/build_tower_game.py` is a stdlib-only Python
 script that generates `tower-castle-defense.sb3` — a 9-target vanilla
 Scratch 3 tower-defense game (Stage + Castle + 4 Plots + Enemy + Arrow +
-StartButton). 38-check self-test runs in <2s, only writes the .sb3 on PASS.
+StartButton). 40-check self-test runs in <2s, only writes the .sb3 on PASS.
 
 Run: `cd "/Users/blessed/Scratch mcp" && python3 build_tower_game.py`
 
@@ -72,7 +72,7 @@ time.
 
 ---
 
-## 3. The 38 self-test checks (what they actually verify)
+## 3. The 40 self-test checks (what they actually verify)
 
 | # | Check | Catches |
 |---|---|---|
@@ -413,7 +413,7 @@ not killed`.
 
 ### 6.4 Re-test in a real browser
 
-The 38-check self-test catches structural bugs. It does NOT catch:
+The 40-check self-test catches structural bugs. It does NOT catch:
 - visual misplacement (bboxes can be non-empty but in the wrong
   place)
 - timing bugs (clones spawning too fast/slow)
@@ -512,10 +512,10 @@ build so the next session starts from a known-good state.
 Two projects in one directory:
 
 1. **`scratch_unified/` — the merged MCP server** (the product).
-   One FastMCP app over stdio merging three upstreams into 104 tools:
+   One FastMCP app over stdio merging three upstreams into 112 tools:
    20 `social_*` + 18 `project_*` (vendored uukelele/scratch-mcp,
    scratchattach+goboscript) + 14 `spy_*` (headless scratchpy-studio)
-   + 52 `sb3_*` (44 proxied to the scratch4js Node sidecar + 8 native
+   + 60 `sb3_*` (52 proxied to the scratch4js Node sidecar + 8 native
    extras in `sb3_extra.py`). Zero name collisions, one `command`
    (`python3 -m scratch_unified`) starts everything.
 2. **`build_tower_game.py` → `tower-castle-defense.sb3`** — the
@@ -538,7 +538,7 @@ edit them. Upstream updates = re-clone.
   Vendored modules do `from .server import mcp`. Import-time
   registration in `server.py:16-22`: `social` + `projects`
   (self-registering via decorators), `sb3_extra` (decorators),
-  `register_sb3_tools(mcp)` (44 typed proxies), `register_spy_tools(mcp)`
+  `register_sb3_tools(mcp)` (52 typed proxies), `register_spy_tools(mcp)`
   (14 wrappers). Import order matters — don't reorder.
 - Path constants in `scratch_unified/__init__.py:4-11` (`ROOT`,
   `UPSTREAM_UU/JS/SPY`, `NODE_SERVER`, `SPY_FILE`, `__version__`).
@@ -597,7 +597,7 @@ edit them. Upstream updates = re-clone.
 ### 9.4 Verified state (ran 2026-09-04)
 
 - `python3 tests/test_offline.py` → **34 passed, 0 failed**.
-- `python3 build_tower_game.py` → **self_test: 38 passed, 0 failed**,
+- `python3 build_tower_game.py` → **self_test: 40 passed, 0 failed**,
   wrote `tower-castle-defense.sb3` (84,698 bytes).
 - Live `.sb3` introspection: 9 targets
   (Stage, Castle, Plot1-4, Enemy, Arrow, StartButton), **340 blocks**,
@@ -627,7 +627,7 @@ edit them. Upstream updates = re-clone.
 
 ## 10. Headless-VM runtime harness (added 2026-09-05)
 
-The 38-check self-test in `build_tower_game.py` is structural and
+The 40-check self-test in `build_tower_game.py` is structural and
 single-expression — it does NOT run the VM. `tests/test_runtime.py`
 fills that gap by driving `tower-castle-defense.sb3` through the
 proxied `sb3_vm_*` tools.
